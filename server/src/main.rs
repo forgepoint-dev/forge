@@ -1,5 +1,6 @@
 mod db;
 mod supervisor;
+mod extensions;
 
 use anyhow::Context as _;
 use async_graphql::http::{GraphQLPlaygroundConfig, playground_source};
@@ -782,6 +783,9 @@ async fn graphql_playground() -> Html<String> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Initialize tracing
+    tracing_subscriber::fmt::init();
+
     let (pool, db_root_path) = db::init_pool().await?;
 
     let repos_root_raw = std::env::var("FORGE_REPOS_PATH")
@@ -805,6 +809,16 @@ async fn main() -> anyhow::Result<()> {
 
     let storage = RepositoryStorage::new(repos_root, remote_cache_root);
 
+    // Initialize extension manager
+    let extensions_dir = db_root_path.parent().unwrap_or_else(|| std::path::Path::new(".")).join("server/extensions");
+
+    let mut extension_manager = extensions::ExtensionManager::new(extensions_dir, db_root_path.clone());
+
+    // Load extensions at startup
+    if let Err(e) = extension_manager.load_extensions().await {
+        tracing::warn!("Failed to load extensions: {}", e);
+    }
+
     let schema = Schema::build(
         QueryRoot::default(),
         MutationRoot::default(),
@@ -812,6 +826,7 @@ async fn main() -> anyhow::Result<()> {
     )
     .data(pool.clone())
     .data(storage.clone())
+    .data(extension_manager)
     .finish();
 
     let mut supervisor = Supervisor::new();
@@ -837,7 +852,22 @@ fn build_api_router(schema: AppSchema) -> Router {
                 .allow_headers(Any)
                 .allow_methods([Method::POST, Method::OPTIONS]),
         )
+<<<<<<< HEAD
         .with_state(schema)
+||||||| parent of 9180e10 (Implement basic WASM extension system infrastructure)
+        .with_state(schema);
+
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await?;
+    axum::serve(listener, app).await?;
+    Ok(())
+=======
+        .with_state(schema);
+
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await?;
+    tracing::info!("GraphQL server starting on http://0.0.0.0:8000");
+    axum::serve(listener, app).await?;
+    Ok(())
+>>>>>>> 9180e10 (Implement basic WASM extension system infrastructure)
 }
 
 async fn run_api(schema: AppSchema, shutdown: CancellationToken) -> anyhow::Result<()> {

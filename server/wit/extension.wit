@@ -1,0 +1,25 @@
+package forge:extension@0.1.0;
+
+interface extension {
+    record extension-config {
+        name: string,
+        db-path: string,
+        config: option<string>,
+    }
+
+    /// Initialize extension with configuration
+    init: func(config: extension-config) -> result<_, string>;
+
+    /// Return GraphQL schema SDL as string
+    get-schema: func() -> string;
+
+    /// Run database migrations
+    migrate: func(db-path: string) -> result<_, string>;
+
+    /// Handle GraphQL field resolution
+    resolve-field: func(field: string, args: string) -> result<string, string>;
+}
+
+world extension-host {
+    export extension;
+}
