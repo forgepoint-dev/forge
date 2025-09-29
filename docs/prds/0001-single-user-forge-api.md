@@ -27,6 +27,7 @@ The forge owner needs a lightweight server that exposes a stable API for managin
 
 ## Functional Requirements
 - Environment variable `FORGE_DB_PATH` points to the directory containing `forge.db` and per-repository databases.
+- Environment variable `FORGE_REPOS_PATH` points to the root directory where working copies of repositories are stored.
 - GraphQL schema exposes `Group` and `Repository` types with fields: `id`, `slug`, and parent references per RFC-0001.
 - Queries: `getAllGroups`, `getAllRepositories`, `getGroup(path: String!)`, `getRepository(path: String!)`.
 - Mutations: `createGroup(input: { slug, parentId? })`, `createRepository(input: { slug, groupId? })`.

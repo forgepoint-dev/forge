@@ -13,3 +13,4 @@ sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "macros"
 cuid2 = "0.1"
 tower-http = { version = "0.5", features = ["cors"] }
 url = "2"
+git2 = { version = "0.18", features = ["https"] }

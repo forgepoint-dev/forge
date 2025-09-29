@@ -8,7 +8,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, S
 const FORGE_DB_FILENAME: &str = "forge.db";
 
 /// Initialize the forge metadata database, running migrations as needed.
-pub async fn init_pool() -> Result<SqlitePool> {
+pub async fn init_pool() -> Result<(SqlitePool, PathBuf)> {
     let db_root =
         std::env::var("FORGE_DB_PATH").context("FORGE_DB_PATH environment variable must be set")?;
 
@@ -32,10 +32,10 @@ pub async fn init_pool() -> Result<SqlitePool> {
 
     sqlx::migrate!("./migrations").run(&pool).await?;
 
-    Ok(pool)
+    Ok((pool, db_root_path))
 }
 
-fn normalize_path<P: Into<PathBuf>>(path: P) -> Result<PathBuf> {
+pub(crate) fn normalize_path<P: Into<PathBuf>>(path: P) -> Result<PathBuf> {
     let path = path.into();
     if path.is_absolute() {
         return Ok(path);
