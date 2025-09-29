@@ -1,4 +1,5 @@
 mod db;
+mod supervisor;
 
 use anyhow::Context as _;
 use async_graphql::http::{GraphQLPlaygroundConfig, playground_source};
@@ -11,11 +12,12 @@ use axum::extract::State;
 use axum::http::{Method, StatusCode};
 use axum::response::Html;
 use axum::routing::{get, post};
-use git2::{AutotagOption, ErrorCode, FetchOptions, ObjectType};
 use sqlx::SqlitePool;
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
+use supervisor::Supervisor;
 use tokio::task;
+use tokio_util::sync::CancellationToken;
 use tower_http::cors::{Any, CorsLayer};
 use url::Url;
 
@@ -148,9 +150,8 @@ impl RepositoryStorage {
     ) -> async_graphql::Result<PathBuf> {
         let remote_url = record
             .remote_url
-            .as_ref()
-            .ok_or_else(|| internal_error("remote repository missing URL"))?
-            .clone();
+            .clone()
+            .ok_or_else(|| internal_error("remote repository missing URL"))?;
         let cache_path = self.remote_cache_root.join(&record.id);
         let parent = cache_path.parent().map(Path::to_path_buf);
 
@@ -166,25 +167,24 @@ impl RepositoryStorage {
             }
 
             if cache_path.exists() {
-                match git2::Repository::open(&cache_path) {
-                    Ok(repo) => {
-                        refresh_remote_repository_cache(&repo, &remote_url)?;
-                        return Ok(cache_path);
-                    }
-                    Err(_) => {
-                        std::fs::remove_dir_all(&cache_path).map_err(|err| {
-                            internal_error(format!(
-                                "failed to reset remote cache at {}: {}",
-                                cache_path.display(),
-                                err
-                            ))
-                        })?;
-                    }
-                }
+                std::fs::remove_dir_all(&cache_path).map_err(|err| {
+                    internal_error(format!(
+                        "failed to reset remote cache at {}: {}",
+                        cache_path.display(),
+                        err
+                    ))
+                })?;
             }
 
-            let repo = git2::build::RepoBuilder::new()
-                .clone(&remote_url, &cache_path)
+            let mut prepare =
+                gix::prepare_clone(remote_url.clone(), &cache_path).map_err(|err| {
+                    internal_error(format!(
+                        "failed to prepare clone for remote repository {}: {}",
+                        remote_url, err
+                    ))
+                })?;
+            let (repo, _) = prepare
+                .fetch_only(gix::progress::Discard, &gix::interrupt::IS_INTERRUPTED)
                 .map_err(|err| {
                     internal_error(format!(
                         "failed to clone remote repository {}: {}",
@@ -204,77 +204,16 @@ impl RepositoryStorage {
 }
 
 fn refresh_remote_repository_cache(
-    repo: &git2::Repository,
+    repo: &gix::Repository,
     remote_url: &str,
 ) -> async_graphql::Result<()> {
-    let mut remote = match repo.find_remote("origin") {
-        Ok(remote) => remote,
-        Err(err) if err.code() == ErrorCode::NotFound => repo
-            .remote("origin", remote_url)
-            .map_err(|err| {
-                internal_error(format!(
-                    "failed to configure remote {} for cache: {}",
-                    remote_url, err
-                ))
-            })?,
-        Err(err) => return Err(internal_error(err)),
-    };
-
-    let needs_url_update = remote
-        .url()
-        .map(|url| url != remote_url)
-        .unwrap_or(true);
-
-    if needs_url_update {
-        drop(remote);
-        repo.remote_set_url("origin", remote_url).map_err(|err| {
-            internal_error(format!(
-                "failed to update remote URL for {}: {}",
-                remote_url, err
-            ))
-        })?;
-
-        remote = repo
-            .find_remote("origin")
-            .map_err(|err| internal_error(err))?;
-    }
-
-    let mut fetch_options = FetchOptions::new();
-    fetch_options.download_tags(AutotagOption::All);
-
-    remote
-        .fetch::<&str>(&[], Some(&mut fetch_options), None)
-        .map_err(|err| {
-            internal_error(format!(
-                "failed to fetch updates for remote repository {}: {}",
-                remote_url, err
-            ))
-        })?;
-
-    drop(remote);
-
-    let remote_head = repo
-        .find_reference("refs/remotes/origin/HEAD")
+    repo.find_reference("refs/remotes/origin/HEAD")
         .map_err(|err| {
             internal_error(format!(
                 "failed to resolve remote HEAD for {}: {}",
                 remote_url, err
             ))
         })?;
-
-    let target_branch = remote_head
-        .symbolic_target()
-        .ok_or_else(|| internal_error("remote HEAD does not point to a branch"))?
-        .to_string();
-
-    drop(remote_head);
-
-    repo.set_head(&target_branch).map_err(|err| {
-        internal_error(format!(
-            "failed to update cached repository HEAD for {}: {}",
-            remote_url, err
-        ))
-    })?;
 
     Ok(())
 }
@@ -317,7 +256,7 @@ fn list_repository_entries(
     repository_path: &Path,
     tree_path: &str,
 ) -> async_graphql::Result<Vec<RepositoryEntryNode>> {
-    let repo = git2::Repository::open(repository_path).map_err(|err| {
+    let repo = gix::open(repository_path).map_err(|err| {
         internal_error(format!(
             "failed to open repository at {}: {}",
             repository_path.display(),
@@ -325,9 +264,9 @@ fn list_repository_entries(
         ))
     })?;
 
-    let head = match repo.head() {
+    let mut head = match repo.head() {
         Ok(head) => head,
-        Err(err) if err.code() == ErrorCode::UnbornBranch => {
+        Err(_) => {
             if tree_path.is_empty() {
                 return Ok(Vec::new());
             }
@@ -337,69 +276,78 @@ fn list_repository_entries(
                 tree_path
             )));
         }
-        Err(err) => return Err(internal_error(err)),
     };
 
-    let commit = head.peel_to_commit().map_err(|err| internal_error(err))?;
+    let commit = head
+        .peel_to_commit_in_place()
+        .map_err(|err| internal_error(err))?;
     let root_tree = commit.tree().map_err(|err| internal_error(err))?;
 
     let tree = if tree_path.is_empty() {
         root_tree
     } else {
-        let entry = root_tree.get_path(Path::new(tree_path)).map_err(|err| {
-            if err.code() == ErrorCode::NotFound {
+        let entry = root_tree
+            .lookup_entry_by_path(Path::new(tree_path))
+            .map_err(|err| internal_error(err))?
+            .ok_or_else(|| {
                 bad_user_input(format!("path `{}` not found in repository", tree_path))
-            } else {
-                internal_error(err)
-            }
-        })?;
+            })?;
 
-        if entry.kind() != Some(ObjectType::Tree) {
+        if !entry.mode().is_tree() {
             return Err(bad_user_input(format!(
                 "path `{}` is not a directory",
                 tree_path
             )));
         }
 
-        repo.find_tree(entry.id())
+        entry
+            .object()
             .map_err(|err| internal_error(err))?
+            .into_tree()
     };
 
     let mut entries = Vec::new();
 
     for entry in tree.iter() {
-        let Some(name) = entry.name() else {
-            return Err(internal_error(
-                "repository contains entries with non-UTF-8 names",
-            ));
-        };
+        let entry = entry.map_err(|err| internal_error(err))?;
+        let name = entry.filename().to_string();
 
-        let name = name.to_string();
         let full_path = if tree_path.is_empty() {
             name.clone()
         } else {
             format!("{}/{}", tree_path, name)
         };
 
-        match entry.kind() {
-            Some(ObjectType::Tree) => entries.push(RepositoryEntryNode {
+        match entry.mode().kind() {
+            gix::object::tree::EntryKind::Tree => entries.push(RepositoryEntryNode {
                 name,
                 path: full_path,
                 kind: RepositoryEntryKind::Directory,
                 size: None,
             }),
-            Some(ObjectType::Blob) => {
+            gix::object::tree::EntryKind::Blob
+            | gix::object::tree::EntryKind::BlobExecutable
+            | gix::object::tree::EntryKind::Link => {
                 let blob = repo
-                    .find_blob(entry.id())
-                    .map_err(|err| internal_error(err))?;
+                    .find_object(entry.oid())
+                    .map_err(|err| internal_error(err))?
+                    .into_blob();
                 entries.push(RepositoryEntryNode {
                     name,
                     path: full_path,
                     kind: RepositoryEntryKind::File,
-                    size: Some(blob.size() as i64),
+                    size: Some(blob.data.len() as i64),
                 });
             }
-            _ => {}
+            gix::object::tree::EntryKind::Commit => {
+                // Submodules don't expose size; treat as directory for navigation purposes.
+                entries.push(RepositoryEntryNode {
+                    name,
+                    path: full_path,
+                    kind: RepositoryEntryKind::Directory,
+                    size: None,
+                });
+            }
         }
     }
 
@@ -866,7 +814,21 @@ async fn main() -> anyhow::Result<()> {
     .data(storage.clone())
     .finish();
 
-    let app = Router::new()
+    let mut supervisor = Supervisor::new();
+
+    supervisor.spawn("api", move |shutdown| async move {
+        run_api(schema, shutdown).await
+    });
+
+    supervisor.run().await
+}
+
+fn bad_user_input(message: impl Into<String>) -> Error {
+    Error::new(message.into()).extend_with(|_, e| e.set("code", "BAD_USER_INPUT"))
+}
+
+fn build_api_router(schema: AppSchema) -> Router {
+    Router::new()
         .route("/", get(graphql_playground))
         .route("/graphql", post(graphql_handler).options(graphql_options))
         .layer(
@@ -875,15 +837,15 @@ async fn main() -> anyhow::Result<()> {
                 .allow_headers(Any)
                 .allow_methods([Method::POST, Method::OPTIONS]),
         )
-        .with_state(schema);
-
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await?;
-    axum::serve(listener, app).await?;
-    Ok(())
+        .with_state(schema)
 }
 
-fn bad_user_input(message: impl Into<String>) -> Error {
-    Error::new(message.into()).extend_with(|_, e| e.set("code", "BAD_USER_INPUT"))
+async fn run_api(schema: AppSchema, shutdown: CancellationToken) -> anyhow::Result<()> {
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await?;
+    axum::serve(listener, build_api_router(schema))
+        .with_graceful_shutdown(shutdown.cancelled_owned())
+        .await?;
+    Ok(())
 }
 
 async fn graphql_options() -> StatusCode {
@@ -988,15 +950,15 @@ async fn resolve_group_by_path(
             .bind(slug)
             .bind(parent)
             .fetch_optional(pool)
-            .await?
+            .await
         } else {
             sqlx::query_as::<_, GroupRecord>(
                 "SELECT id, slug, parent FROM groups WHERE slug = ? AND parent IS NULL",
             )
             .bind(slug)
             .fetch_optional(pool)
-            .await?
-        };
+            .await
+        }?;
 
         match record {
             Some(row) => {
@@ -1033,19 +995,23 @@ async fn resolve_repository_by_path(
     };
 
     match group_id.as_deref() {
-        Some(group_id) => sqlx::query_as::<_, RepositoryRecord>(
-            "SELECT id, slug, \"group\" as group_id, remote_url FROM repositories WHERE slug = ? AND \"group\" = ?",
-        )
-        .bind(repo_slug)
-        .bind(group_id)
-        .fetch_optional(pool)
-        .await,
-        None => sqlx::query_as::<_, RepositoryRecord>(
-            "SELECT id, slug, \"group\" as group_id, remote_url FROM repositories WHERE slug = ? AND \"group\" IS NULL",
-        )
-        .bind(repo_slug)
-        .fetch_optional(pool)
-        .await,
+        Some(group_id) => {
+            sqlx::query_as::<_, RepositoryRecord>(
+                "SELECT id, slug, \"group\" as group_id, remote_url FROM repositories WHERE slug = ? AND \"group\" = ?",
+            )
+            .bind(repo_slug)
+            .bind(group_id)
+            .fetch_optional(pool)
+            .await
+        }
+        None => {
+            sqlx::query_as::<_, RepositoryRecord>(
+                "SELECT id, slug, \"group\" as group_id, remote_url FROM repositories WHERE slug = ? AND \"group\" IS NULL",
+            )
+            .bind(repo_slug)
+            .fetch_optional(pool)
+            .await
+        }
     }
 }
 
@@ -1064,7 +1030,7 @@ fn normalize_remote_repository(raw_url: &str) -> async_graphql::Result<(String, 
         Url::parse(raw_url).map_err(|_| bad_user_input("invalid remote repository URL"))?;
 
     match url.scheme() {
-        "http" | "https" => {}
+        "http" | "https" => {} // OK
         _ => return Err(bad_user_input("only http(s) remote URLs are supported")),
     }
 

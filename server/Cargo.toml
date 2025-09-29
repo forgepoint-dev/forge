@@ -7,10 +7,11 @@ edition = "2024"
 async-graphql = "7"
 async-graphql-axum = "7"
 axum = "0.8"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+tokio-util = "0.7"
 anyhow = "1"
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "macros"] }
 cuid2 = "0.1"
 tower-http = { version = "0.5", features = ["cors"] }
 url = "2"
-git2 = { version = "0.18", features = ["https"] }
+gix = { version = "0.73.0", features = ["blocking-http-transport-reqwest-rust-tls"] }

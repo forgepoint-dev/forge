@@ -61,6 +61,10 @@
 
               mold.enable = true;
             };
+
+            packages = [
+              pkgs.openssl.dev
+            ];
           };
 
           treefmt = {

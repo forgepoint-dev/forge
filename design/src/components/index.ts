@@ -1,6 +1,6 @@
-export { default as Dialog } from './ui/Dialog.vue'
-export { default as Button } from './ui/Button.vue'
-export { default as Input } from './ui/Input.vue'
-export { default as Label } from './ui/Label.vue'
-export { default as CreateRepositoryDialog } from './CreateRepositoryDialog.vue'
-export { default as LinkRepositoryDialog } from './LinkRepositoryDialog.vue'
+export { default as Dialog } from "./ui/Dialog.vue";
+export { default as Button } from "./ui/Button.vue";
+export { default as Input } from "./ui/Input.vue";
+export { default as Label } from "./ui/Label.vue";
+export { default as CreateRepositoryDialog } from "./CreateRepositoryDialog.vue";
+export { default as LinkRepositoryDialog } from "./LinkRepositoryDialog.vue";

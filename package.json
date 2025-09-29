@@ -1,6 +1,9 @@
 {
-  "name": "forge-workspace",
-  "private": true,
-  "workspaces": ["apps/*", "design"],
-  "packageManager": "bun@1.1.30"
+	"name": "forge-workspace",
+	"private": true,
+	"workspaces": [
+		"apps/*",
+		"design"
+	],
+	"packageManager": "bun@1.1.30"
 }
