@@ -5,7 +5,17 @@ interface extension {
         name: string,
         db-path: string,
         config: option<string>,
+        api-version: string,
+        capabilities: list<string>,
     }
+
+    record api-info {
+        version: string,
+        supported-capabilities: list<string>,
+    }
+
+    /// Get API version and capabilities supported by extension
+    get-api-info: func() -> api-info;
 
     /// Initialize extension with configuration
     init: func(config: extension-config) -> result<_, string>;
@@ -16,7 +26,7 @@ interface extension {
     /// Run database migrations
     migrate: func(db-path: string) -> result<_, string>;
 
-    /// Handle GraphQL field resolution
+    /// Handle GraphQL field resolution with timeout
     resolve-field: func(field: string, args: string) -> result<string, string>;
 }
 

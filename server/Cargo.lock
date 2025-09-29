@@ -2916,6 +2916,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "metrics"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3045b4193fbdc5b5681f32f11070da9be3609f189a79f3390706d42587f46bb5"
+dependencies = [
+ "ahash",
+ "portable-atomic",
+]
+
+[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3852,13 +3862,17 @@ dependencies = [
  "anyhow",
  "async-graphql",
  "async-graphql-axum",
+ "async-graphql-parser",
  "axum",
  "cuid2",
  "gix",
+ "metrics",
  "serde",
  "serde_json",
  "sqlx",
+ "tempfile",
  "tokio",
+ "tokio-test",
  "tokio-util",
  "tower-http 0.5.2",
  "tracing",
@@ -4524,6 +4538,19 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+]
+
+[[package]]
+name = "tokio-test"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2468baabc3311435b55dd935f702f42cd1b8abb7e754fb7dfb16bd36aa88f9f7"
+dependencies = [
+ "async-stream",
+ "bytes",
+ "futures-core",
+ "tokio",
+ "tokio-stream",
 ]
 
 [[package]]
