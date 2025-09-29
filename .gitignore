@@ -6,3 +6,9 @@
 /node_modules/
 .devenv/
 .DS_Store
+
+# SQLite database files
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
