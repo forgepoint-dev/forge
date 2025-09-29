@@ -1,0 +1,21 @@
+{
+	"name": "forge-web",
+	"type": "module",
+	"version": "0.0.1",
+	"packageManager": "bun@1.1.30",
+	"scripts": {
+		"dev": "astro dev",
+		"build": "astro build",
+		"preview": "astro preview",
+		"astro": "astro"
+	},
+	"dependencies": {
+		"astro": "^5.14.1",
+		"@astrojs/vue": "^5.0.0",
+		"@astrojs/tailwind": "^5.0.0",
+		"vue": "^3.4.38",
+		"tailwindcss": "^3.4.14",
+		"autoprefixer": "^10.4.20",
+		"postcss": "^8.4.47"
+	}
+}

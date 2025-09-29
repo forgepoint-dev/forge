@@ -1,0 +1,7 @@
+/target/
+/.forge/
+/.devenv/
+/.claude/
+/.jj/
+/node_modules/
+.DS_Store
