@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import UiInput from './ui/input.vue'
 import { graphqlRequest } from '../lib/graphql'
+import { CreateRepositoryDialog, LinkRepositoryDialog, Button } from 'design'
 
 type GroupNode = {
   id: string
@@ -23,8 +24,12 @@ type RepoCard = {
 }
 
 const repos = ref<RepoCard[]>([])
+const groups = ref<GroupNode[]>([])
 const loading = ref(true)
 const error = ref<string | null>(null)
+
+const showCreateDialog = ref(false)
+const showLinkDialog = ref(false)
 
 const hasRepos = computed(() => repos.value.length > 0)
 
@@ -44,8 +49,10 @@ function buildGroupPath(groups: Map<string, { slug: string; parentId: string | n
   return path.reverse()
 }
 
-onMounted(async () => {
+async function loadData() {
   try {
+    loading.value = true
+    error.value = null
     const query = /* GraphQL */ `
       query HomeLandingData {
         getAllGroups {
@@ -72,6 +79,8 @@ onMounted(async () => {
       query,
     })
 
+    groups.value = data.getAllGroups
+
     const groupMap = new Map<string, { slug: string; parentId: string | null }>()
     for (const group of data.getAllGroups) {
       groupMap.set(group.id, { slug: group.slug, parentId: group.parent?.id ?? null })
@@ -93,6 +102,63 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
+}
+
+async function createRepository(data: { slug: string; groupId?: string }) {
+  try {
+    const mutation = /* GraphQL */ `
+      mutation CreateRepository($input: CreateRepositoryInput!) {
+        createRepository(input: $input) {
+          id
+          slug
+        }
+      }
+    `
+
+    await graphqlRequest({
+      query: mutation,
+      variables: {
+        input: {
+          slug: data.slug,
+          group: data.groupId || null
+        }
+      }
+    })
+
+    // Reload data to show the new repository
+    await loadData()
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : 'Failed to create repository'
+  }
+}
+
+async function linkRepository(data: { url: string }) {
+  try {
+    const mutation = /* GraphQL */ `
+      mutation LinkRemoteRepository($url: String!) {
+        linkRemoteRepository(url: $url) {
+          id
+          slug
+        }
+      }
+    `
+
+    await graphqlRequest({
+      query: mutation,
+      variables: {
+        url: data.url
+      }
+    })
+
+    // Reload data to show the new repository
+    await loadData()
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : 'Failed to link repository'
+  }
+}
+
+onMounted(async () => {
+  await loadData()
 })
 </script>
 
@@ -122,6 +188,14 @@ onMounted(async () => {
       <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-16">
         <div class="flex items-center justify-between mb-6">
           <h2 class="text-2xl font-semibold">Repositories</h2>
+          <div class="flex gap-2">
+            <Button @click="showCreateDialog = true">
+              Create Repository
+            </Button>
+            <Button variant="outline" @click="showLinkDialog = true">
+              Link Repository
+            </Button>
+          </div>
         </div>
         <div class="grid gap-3">
           <div v-if="loading" class="rounded-lg border p-4 text-sm text-muted-foreground bg-muted/40">
@@ -156,6 +230,17 @@ onMounted(async () => {
         </div>
       </div>
     </section>
+
+    <!-- Dialogs -->
+    <CreateRepositoryDialog 
+      v-model:open="showCreateDialog" 
+      :groups="groups"
+      @create="createRepository"
+    />
+    <LinkRepositoryDialog 
+      v-model:open="showLinkDialog" 
+      @link="linkRepository"
+    />
 
     <!-- Footer -->
     <footer class="border-t mt-auto">
