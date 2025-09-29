@@ -14,6 +14,7 @@ use std::path::PathBuf;
 
 /// Represents a loaded extension with its metadata and runtime state
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Will be used when extension system is fully integrated
 pub struct Extension {
     pub name: String,
     pub db_path: PathBuf,
@@ -81,7 +82,7 @@ mod tests {
 
     #[test]
     fn test_schema_manager_basic_operations() {
-        let mut schema_manager = schema::SchemaManager::new();
+        let mut schema_manager = schema::builder::SchemaManager::new();
         assert!(!schema_manager.has_extensions());
         assert!(schema_manager.get_extension_schemas().is_empty());
 
@@ -90,6 +91,7 @@ mod tests {
     }
 }
 
+#[allow(dead_code)] // Extension system methods will be used when fully integrated
 impl ExtensionManager {
     /// Create a new extension manager
     pub fn new(extensions_dir: PathBuf, db_path: PathBuf) -> Self {

@@ -3,7 +3,6 @@
 use anyhow::{Context, Result};
 use std::path::Path;
 use wasmtime::*;
-use wasmtime_wasi::preview1::WasiP1Ctx;
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
 use super::interface::ExtensionInstance;

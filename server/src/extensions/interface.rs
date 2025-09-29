@@ -28,6 +28,7 @@ pub struct ApiInfo {
 
 /// Metrics for extension operations
 #[derive(Debug)]
+#[allow(dead_code)] // Will be used for monitoring extension performance
 pub struct ExtensionMetrics {
     pub init_calls: AtomicU64,
     pub schema_calls: AtomicU64,
@@ -51,6 +52,7 @@ impl ExtensionMetrics {
 }
 
 /// Wrapper for a WASM extension instance with safety controls
+#[allow(dead_code)] // Fields will be used for WASM execution
 pub struct ExtensionInstance {
     store: Store<WasiP1Ctx>,
     instance: Instance,
@@ -59,6 +61,7 @@ pub struct ExtensionInstance {
     name: String,
 }
 
+#[allow(dead_code)] // Methods will be used for extension execution
 impl ExtensionInstance {
     pub fn new(store: Store<WasiP1Ctx>, instance: Instance, engine: Engine) -> Self {
         Self {
