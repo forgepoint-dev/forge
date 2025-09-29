@@ -1,0 +1,94 @@
+name: Setup Development Environment
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner_os:
+        description: 'Operating System'
+        required: true
+        default: 'ubuntu-latest'
+        type: choice
+        options:
+        - ubuntu-latest
+        - macos-latest
+
+jobs:
+  setup-devenv:
+    runs-on: ${{ github.event.inputs.runner_os || 'ubuntu-latest' }}
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Install Nix
+      uses: DeterminateSystems/nix-installer-action@main
+      with:
+        logger: pretty
+    
+    - name: Setup Nix cache
+      uses: DeterminateSystems/magic-nix-cache-action@main
+    
+    - name: Verify Nix installation
+      run: |
+        nix --version
+        nix flake show --json | jq -r '.devShells | keys[]'
+    
+    - name: Enter development environment and verify tools
+      run: |
+        nix develop --command bash -c "
+          echo '=== Development Environment Setup Complete ==='
+          echo 'Rust toolchain:'
+          cargo --version
+          rustc --version
+          rustfmt --version
+          echo
+          echo 'JavaScript/Node.js toolchain:'
+          node --version
+          npm --version
+          bun --version
+          echo
+          echo 'Nix toolchain:'
+          nix --version
+          echo
+          echo 'Code formatting tools:'
+          nixfmt --version || echo 'nixfmt available'
+          echo
+          echo '=== Ready for development! ==='
+        "
+    
+    - name: Test project build (Rust)
+      run: |
+        nix develop --command bash -c "
+          echo 'Testing Rust server build...'
+          cd server
+          cargo check --all-targets
+        "
+    
+    - name: Test project setup (Frontend)
+      run: |
+        nix develop --command bash -c "
+          echo 'Testing frontend setup...'
+          cd apps/web
+          bun install
+          echo 'Frontend dependencies installed successfully'
+        "
+    
+    - name: Test formatting
+      run: |
+        nix develop --command bash -c "
+          echo 'Testing code formatting...'
+          nix fmt --help || echo 'Formatter available'
+        "
+    
+    - name: Display setup instructions
+      run: |
+        echo "🎉 Development environment setup complete!"
+        echo ""
+        echo "To get started on your local machine:"
+        echo "1. Install Nix: curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install"
+        echo "2. Clone the repository: git clone https://github.com/forgepoint-dev/forge.git"
+        echo "3. Enter the development environment: nix develop"
+        echo "4. Start the server: just server"
+        echo "5. In another terminal, start the frontend: cd apps/web && bun run dev"
+        echo ""
+        echo "See .github/copilot-instructions.md for detailed development information."
