@@ -810,7 +810,10 @@ async fn main() -> anyhow::Result<()> {
     let storage = RepositoryStorage::new(repos_root, remote_cache_root);
 
     // Initialize extension manager
-    let extensions_dir = db_root_path.parent().unwrap_or_else(|| std::path::Path::new(".")).join("server/extensions");
+    let extensions_dir = db_root_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("server/extensions");
 
     let mut extension_manager = extensions::ExtensionManager::new(extensions_dir, db_root_path.clone());
 

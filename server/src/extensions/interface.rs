@@ -1,13 +1,13 @@
 //! WIT bindings and communication with WASM extensions
 
 use anyhow::Result;
-use std::time::{Duration, Instant};
-use wasmtime::{Store, Instance, Engine};
-use wasmtime_wasi::preview1::WasiP1Ctx;
-use serde::{Serialize, Deserialize};
-use tokio::time::timeout;
-use std::sync::atomic::{AtomicU64, Ordering};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use wasmtime::{Engine, Instance, Store};
+use wasmtime_wasi::preview1::WasiP1Ctx;
+
+use super::schema::SchemaFragment;
 
 /// Configuration passed to extensions during initialization
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,9 +61,9 @@ pub struct ExtensionInstance {
 
 impl ExtensionInstance {
     pub fn new(store: Store<WasiP1Ctx>, instance: Instance, engine: Engine) -> Self {
-        Self { 
-            store, 
-            instance, 
+        Self {
+            store,
+            instance,
             engine,
             metrics: Arc::new(ExtensionMetrics::new()),
             name: "unknown".to_string(),
@@ -91,13 +91,14 @@ impl ExtensionInstance {
     pub async fn init(&mut self, config: &ExtensionConfig) -> Result<()> {
         self.metrics.init_calls.fetch_add(1, Ordering::Relaxed);
         self.name = config.name.clone();
-        
+
         // First check API compatibility
         let api_info = self.get_api_info().await?;
         if api_info.version != config.api_version {
             return Err(anyhow::anyhow!(
                 "API version mismatch: extension provides {}, host expects {}",
-                api_info.version, config.api_version
+                api_info.version,
+                config.api_version
             ));
         }
 
@@ -106,7 +107,8 @@ impl ExtensionInstance {
             if !api_info.supported_capabilities.contains(capability) {
                 return Err(anyhow::anyhow!(
                     "Extension {} does not support required capability: {}",
-                    config.name, capability
+                    config.name,
+                    capability
                 ));
             }
         }
@@ -116,29 +118,38 @@ impl ExtensionInstance {
         Ok(())
     }
 
-    /// Get the GraphQL schema SDL from the extension
-    pub async fn get_schema(&mut self) -> Result<String> {
+    /// Get the GraphQL schema from the extension
+    pub async fn get_schema(&mut self) -> Result<SchemaFragment> {
         self.metrics.schema_calls.fetch_add(1, Ordering::Relaxed);
-        
-        // Placeholder - return empty schema for now
-        Ok(String::new())
+
+        // Placeholder - return empty schema fragment for now
+        Ok(SchemaFragment::default())
     }
 
     /// Run database migrations with timeout
     pub async fn migrate(&mut self, db_path: &str) -> Result<()> {
         self.metrics.migrate_calls.fetch_add(1, Ordering::Relaxed);
-        
+
         // Placeholder implementation - would call WASM function
-        tracing::info!("Extension {} migration completed for DB: {}", self.name, db_path);
+        tracing::info!(
+            "Extension {} migration completed for DB: {}",
+            self.name,
+            db_path
+        );
         Ok(())
     }
 
     /// Resolve a GraphQL field with concurrency control
     pub async fn resolve_field(&mut self, field: &str, args: &str) -> Result<String> {
         self.metrics.resolve_calls.fetch_add(1, Ordering::Relaxed);
-        
+
         // Placeholder - return empty result
-        tracing::debug!("Extension {} resolved field {} with args {}", self.name, field, args);
+        tracing::debug!(
+            "Extension {} resolved field {} with args {}",
+            self.name,
+            field,
+            args
+        );
         Ok(String::new())
     }
 }

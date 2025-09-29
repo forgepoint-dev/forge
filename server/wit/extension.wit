@@ -20,8 +20,88 @@ interface extension {
     /// Initialize extension with configuration
     init: func(config: extension-config) -> result<_, string>;
 
-    /// Return GraphQL schema SDL as string
-    get-schema: func() -> string;
+    enum type-modifier {
+        list-type,
+        non-null,
+    }
+
+    record type-ref {
+        root: string,
+        modifiers: list<type-modifier>,
+    }
+
+    record input-value-definition {
+        name: string,
+        description: option<string>,
+        ty: type-ref,
+        default-value: option<string>,
+    }
+
+    record field-definition {
+        name: string,
+        description: option<string>,
+        ty: type-ref,
+        args: list<input-value-definition>,
+    }
+
+    record object-type {
+        name: string,
+        description: option<string>,
+        interfaces: list<string>,
+        fields: list<field-definition>,
+        is-extension: bool,
+    }
+
+    record interface-type {
+        name: string,
+        description: option<string>,
+        interfaces: list<string>,
+        fields: list<field-definition>,
+    }
+
+    record scalar-type {
+        name: string,
+        description: option<string>,
+    }
+
+    record enum-value {
+        name: string,
+        description: option<string>,
+    }
+
+    record enum-type {
+        name: string,
+        description: option<string>,
+        values: list<enum-value>,
+    }
+
+    record union-type {
+        name: string,
+        description: option<string>,
+        members: list<string>,
+    }
+
+    record input-object-type {
+        name: string,
+        description: option<string>,
+        fields: list<input-value-definition>,
+    }
+
+    variant schema-type {
+        scalar-type(scalar-type),
+        object-type(object-type),
+        interface-type(interface-type),
+        union-type(union-type),
+        enum-type(enum-type),
+        input-object-type(input-object-type),
+    }
+
+    record schema-fragment {
+        types: list<schema-type>,
+    }
+
+    /// Return GraphQL schema as structured data
+    get-schema: func() -> schema-fragment;
 
     /// Run database migrations
     migrate: func(db-path: string) -> result<_, string>;

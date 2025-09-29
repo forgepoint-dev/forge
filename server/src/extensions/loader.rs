@@ -3,8 +3,8 @@
 use anyhow::{Context, Result};
 use std::path::Path;
 use wasmtime::*;
-use wasmtime_wasi::{WasiCtxBuilder, DirPerms, FilePerms};
 use wasmtime_wasi::preview1::WasiP1Ctx;
+use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
 use super::interface::ExtensionInstance;
 
@@ -14,33 +14,38 @@ const MAX_MEMORY_BYTES: u64 = 16 * 1024 * 1024;
 /// Create a secure Wasmtime engine with safety controls
 fn create_secure_engine() -> Result<Engine> {
     let mut config = Config::new();
-    
+
     // Set memory limits
     config.max_wasm_stack(512 * 1024); // 512KB stack limit
     config.memory_init_cow(false); // Disable copy-on-write for security
     config.memory_guaranteed_dense_image_size(0); // No dense image
-    
+
     // Disable features that could be security risks
     config.wasm_reference_types(false);
     config.wasm_bulk_memory(false);
     config.wasm_multi_value(false);
     config.wasm_simd(false);
-    
+
     Engine::new(&config).context("Failed to create secure Wasmtime engine")
 }
 
 /// Load a WASM module and create an extension instance with security constraints
 pub async fn load_wasm_module(wasm_path: &Path, extension_dir: &Path) -> Result<ExtensionInstance> {
     tracing::info!("Loading WASM module: {:?}", wasm_path);
-    
+
     // Create secure engine
     let engine = create_secure_engine()?;
-    
+
     // Create restricted WASI context - only allow access to extension's directory
     let wasi = WasiCtxBuilder::new()
         .inherit_stdio() // Allow stdout/stderr for debugging
         // Do NOT inherit env or give network access
-        .preopened_dir(extension_dir, "/extension", DirPerms::all(), FilePerms::all())
+        .preopened_dir(
+            extension_dir,
+            "/extension",
+            DirPerms::all(),
+            FilePerms::all(),
+        )
         .context("Failed to create restricted WASI context")?
         .build_p1();
 
@@ -50,11 +55,14 @@ pub async fn load_wasm_module(wasm_path: &Path, extension_dir: &Path) -> Result<
     // Load and validate the WASM module
     let module_bytes = std::fs::read(wasm_path)
         .with_context(|| format!("Failed to read WASM file: {:?}", wasm_path))?;
-    
+
     if module_bytes.len() > 10 * 1024 * 1024 {
-        return Err(anyhow::anyhow!("WASM module too large (>10MB): {:?}", wasm_path));
+        return Err(anyhow::anyhow!(
+            "WASM module too large (>10MB): {:?}",
+            wasm_path
+        ));
     }
-    
+
     let module = Module::new(&engine, &module_bytes)
         .with_context(|| format!("Failed to compile WASM module: {:?}", wasm_path))?;
 
@@ -74,7 +82,10 @@ pub async fn load_wasm_module(wasm_path: &Path, extension_dir: &Path) -> Result<
     if let Some(memory) = instance.get_memory(&mut store, "memory") {
         let memory_size = memory.data_size(&store);
         if memory_size > MAX_MEMORY_BYTES as usize {
-            return Err(anyhow::anyhow!("Extension exceeds memory limit: {} bytes", memory_size));
+            return Err(anyhow::anyhow!(
+                "Extension exceeds memory limit: {} bytes",
+                memory_size
+            ));
         }
     }
 
@@ -93,8 +104,8 @@ fn validate_module_imports(module: &Module) -> Result<()> {
                 }
                 // Reject any other host function imports
                 return Err(anyhow::anyhow!(
-                    "Extension imports unauthorized host function: {}::{}", 
-                    import.module(), 
+                    "Extension imports unauthorized host function: {}::{}",
+                    import.module(),
                     import.name()
                 ));
             }

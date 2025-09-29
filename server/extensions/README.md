@@ -6,7 +6,7 @@ This directory contains WebAssembly (WASM) extension modules for the Forge Graph
 
 The extension system allows adding new functionality to the GraphQL API without modifying the core server code. Extensions are compiled as WASM modules and provide:
 
-- GraphQL schema fragments (types, queries, mutations)
+- GraphQL schema fragments (types, queries, mutations) expressed as structured data
 - Field resolvers for their schema
 - Database management with dedicated SQLite databases
 - Secure, sandboxed execution environment
@@ -17,23 +17,35 @@ Each extension must implement the WIT interface defined in `wit/extension.wit`:
 
 ```wit
 interface extension {
-    record extension-config {
-        name: string,
-        db-path: string,
-        config: option<string>,
-    }
+  record extension-config {
+    name: string,
+    db-path: string,
+    config: option<string>,
+    api-version: string,
+    capabilities: list<string>,
+  }
 
-    /// Initialize extension with configuration
-    init: func(config: extension-config) -> result<_, string>;
+  enum type-modifier { list-type, non-null }
+  record type-ref { root: string, modifiers: list<type-modifier> }
+  record field-definition { name: string, description: option<string>, ty: type-ref, args: list<input-value-definition> }
+  record object-type { name: string, description: option<string>, interfaces: list<string>, fields: list<field-definition>, is-extension: bool }
+  variant schema-type { object-type(object-type), enum-type(enum-type), input-object-type(input-object-type), interface-type(interface-type), scalar-type(scalar-type), union-type(union-type) }
+  record schema-fragment { types: list<schema-type> }
 
-    /// Return GraphQL schema SDL as string
-    get-schema: func() -> string;
+  /// Provide API handshake
+  get-api-info: func() -> api-info;
 
-    /// Run database migrations
-    migrate: func(db-path: string) -> result<_, string>;
+  /// Initialize extension with configuration
+  init: func(config: extension-config) -> result<_, string>;
 
-    /// Handle GraphQL field resolution
-    resolve-field: func(field: string, args: string) -> result<string, string>;
+  /// Return GraphQL schema as structured data
+  get-schema: func() -> schema-fragment;
+
+  /// Run database migrations
+  migrate: func(db-path: string) -> result<_, string>;
+
+  /// Handle GraphQL field resolution
+  resolve-field: func(field: string, args: string) -> result<string, string>;
 }
 ```
 
@@ -44,7 +56,7 @@ interface extension {
 3. Extension databases are created/opened at `<FORGE_DB_PATH>/<name>.extension.db`
 4. Extension is initialized with configuration
 5. Database migrations are run
-6. GraphQL schema is retrieved and merged with core schema
+6. GraphQL schema fragment is retrieved and combined with the core schema registry
 7. Field resolutions are routed to appropriate extensions
 
 ## Development
