@@ -1,115 +1,111 @@
+// WIT (WebAssembly Interface Types) definition for GraphQL extensions
 package forge:extension@0.1.0;
 
-interface extension {
-    record extension-config {
+// The main extension world that defines what the extension can import and export
+world extension {
+    // Imports from the host
+    import host-log;
+    import host-database;
+
+    // Exports that the extension must provide
+    export extension-api;
+}
+
+// Logging interface provided by the host
+interface host-log {
+    enum log-level {
+        trace,
+        debug,
+        info,
+        warn,
+        error,
+    }
+
+    // Log a message at the specified level
+    log: func(level: log-level, message: string);
+}
+
+// Database interface provided by the host
+interface host-database {
+    // Result types for database operations
+    variant query-result {
+        success(list<record-value>),
+        error(string),
+    }
+
+    variant exec-result {
+        success(exec-info),
+        error(string),
+    }
+
+    record exec-info {
+        rows-affected: u64,
+        last-insert-id: option<u64>,
+    }
+
+    // Record value can be various types
+    variant record-value {
+        null,
+        bool(bool),
+        i64(s64),
+        f64(float64),
+        text(string),
+        blob(list<u8>),
+    }
+
+    // Execute a query that returns results
+    query: func(sql: string, params: list<record-value>) -> query-result;
+
+    // Execute a statement that doesn't return results
+    execute: func(sql: string, params: list<record-value>) -> exec-result;
+
+    // Run migrations (SQL statements separated by semicolons)
+    migrate: func(migrations: string) -> result<_, string>;
+}
+
+// The main API that extensions must implement
+interface extension-api {
+    // Configuration passed to the extension
+    record config {
         name: string,
-        db-path: string,
-        config: option<string>,
-        api-version: string,
+        version: string,
+        database-path: string,
+        custom-config: option<string>,
+    }
+
+    // GraphQL field resolution
+    record resolve-info {
+        field-name: string,
+        parent-type: string,
+        arguments: string, // JSON string
+        context: string,   // JSON string with request context
+        parent: option<string>, // JSON string of parent object
+    }
+
+    variant resolve-result {
+        success(string), // JSON string
+        error(string),
+    }
+
+    // Extension information
+    record extension-info {
+        name: string,
+        version: string,
         capabilities: list<string>,
     }
 
-    record api-info {
-        version: string,
-        supported-capabilities: list<string>,
-    }
+    // Initialize the extension
+    init: func(config: config) -> result<_, string>;
 
-    /// Get API version and capabilities supported by extension
-    get-api-info: func() -> api-info;
+    // Get extension information
+    get-info: func() -> extension-info;
 
-    /// Initialize extension with configuration
-    init: func(config: extension-config) -> result<_, string>;
+    // Get the GraphQL schema fragment (SDL format)
+    get-schema: func() -> string;
 
-    enum type-modifier {
-        list-type,
-        non-null,
-    }
+    // Resolve a GraphQL field
+    resolve-field: func(info: resolve-info) -> resolve-result;
 
-    record type-ref {
-        root: string,
-        modifiers: list<type-modifier>,
-    }
-
-    record input-value-definition {
-        name: string,
-        description: option<string>,
-        ty: type-ref,
-        default-value: option<string>,
-    }
-
-    record field-definition {
-        name: string,
-        description: option<string>,
-        ty: type-ref,
-        args: list<input-value-definition>,
-    }
-
-    record object-type {
-        name: string,
-        description: option<string>,
-        interfaces: list<string>,
-        fields: list<field-definition>,
-        is-extension: bool,
-    }
-
-    record interface-type {
-        name: string,
-        description: option<string>,
-        interfaces: list<string>,
-        fields: list<field-definition>,
-    }
-
-    record scalar-type {
-        name: string,
-        description: option<string>,
-    }
-
-    record enum-value {
-        name: string,
-        description: option<string>,
-    }
-
-    record enum-type {
-        name: string,
-        description: option<string>,
-        values: list<enum-value>,
-    }
-
-    record union-type {
-        name: string,
-        description: option<string>,
-        members: list<string>,
-    }
-
-    record input-object-type {
-        name: string,
-        description: option<string>,
-        fields: list<input-value-definition>,
-    }
-
-    variant schema-type {
-        scalar-type(scalar-type),
-        object-type(object-type),
-        interface-type(interface-type),
-        union-type(union-type),
-        enum-type(enum-type),
-        input-object-type(input-object-type),
-    }
-
-    record schema-fragment {
-        types: list<schema-type>,
-    }
-
-    /// Return GraphQL schema as structured data
-    get-schema: func() -> schema-fragment;
-
-    /// Run database migrations
-    migrate: func(db-path: string) -> result<_, string>;
-
-    /// Handle GraphQL field resolution with timeout
-    resolve-field: func(field: string, args: string) -> result<string, string>;
-}
-
-world extension-host {
-    export extension;
+    // Clean shutdown
+    shutdown: func();
 }

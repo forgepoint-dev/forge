@@ -2,11 +2,14 @@
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use tokio::time::timeout;
 use wasmtime::{Engine, Instance, Store};
 use wasmtime_wasi::preview1::WasiP1Ctx;
 
+use super::loader::ExtensionLimits;
 use super::schema::SchemaFragment;
 
 /// Configuration passed to extensions during initialization
@@ -59,17 +62,21 @@ pub struct ExtensionInstance {
     engine: Engine,
     metrics: Arc<ExtensionMetrics>,
     name: String,
+    limits: ExtensionLimits,
+    concurrent_ops: Arc<AtomicU64>,
 }
 
 #[allow(dead_code)] // Methods will be used for extension execution
 impl ExtensionInstance {
-    pub fn new(store: Store<WasiP1Ctx>, instance: Instance, engine: Engine) -> Self {
+    pub fn new(store: Store<WasiP1Ctx>, instance: Instance, engine: Engine, limits: ExtensionLimits) -> Self {
         Self {
             store,
             instance,
             engine,
             metrics: Arc::new(ExtensionMetrics::new()),
             name: "unknown".to_string(),
+            limits,
+            concurrent_ops: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -146,6 +153,52 @@ impl ExtensionInstance {
     pub async fn resolve_field(&mut self, field: &str, args: &str) -> Result<String> {
         self.metrics.resolve_calls.fetch_add(1, Ordering::Relaxed);
 
+        // Check concurrent operation limit
+        let current_ops = self.concurrent_ops.fetch_add(1, Ordering::SeqCst);
+        if current_ops >= self.limits.max_concurrent_ops as u64 {
+            self.concurrent_ops.fetch_sub(1, Ordering::SeqCst);
+            return Err(anyhow::anyhow!(
+                "Extension {} exceeded concurrent operation limit",
+                self.name
+            ));
+        }
+
+        // Ensure we decrement the counter when done
+        let _guard = ConcurrentOpsGuard {
+            counter: self.concurrent_ops.clone(),
+        };
+
+        // Apply timeout to the operation
+        let result = timeout(self.limits.operation_timeout, async {
+            self.resolve_field_inner(field, args).await
+        })
+        .await;
+
+        match result {
+            Ok(inner_result) => inner_result,
+            Err(_) => {
+                self.metrics.total_timeouts.fetch_add(1, Ordering::Relaxed);
+                Err(anyhow::anyhow!(
+                    "Extension {} timed out resolving field {}",
+                    self.name,
+                    field
+                ))
+            }
+        }
+    }
+
+    async fn resolve_field_inner(&mut self, field: &str, args: &str) -> Result<String> {
+        // Reset fuel before operation if configured
+        if let Some(max_fuel) = self.limits.max_fuel {
+            self.store.set_fuel(max_fuel).map_err(|e| {
+                anyhow::anyhow!("Failed to set fuel for extension {}: {}", self.name, e)
+            })?;
+        }
+
+        // Update epoch for timeout interruption
+        self.engine.increment_epoch();
+        self.store.set_epoch_deadline(1);
+
         // Placeholder - return empty result
         tracing::debug!(
             "Extension {} resolved field {} with args {}",
@@ -156,3 +209,30 @@ impl ExtensionInstance {
         Ok(String::new())
     }
 }
+
+impl fmt::Debug for ExtensionInstance {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ExtensionInstance")
+            .field("name", &self.name)
+            .field("limits", &self.limits)
+            .field("metrics", &self.metrics)
+            .field("concurrent_ops", &self.concurrent_ops)
+            .finish()
+    }
+}
+
+/// Guard to ensure concurrent operation counter is decremented
+#[derive(Debug)]
+struct ConcurrentOpsGuard {
+    counter: Arc<AtomicU64>,
+}
+
+impl Drop for ConcurrentOpsGuard {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+#[cfg(test)]
+#[path = "interface_tests.rs"]
+mod tests;

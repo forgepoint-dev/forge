@@ -33,6 +33,10 @@ where
     Ok(())
 }
 
+#[cfg(test)]
+#[path = "validator_tests.rs"]
+mod tests;
+
 #[allow(dead_code)]
 pub fn is_root_type(name: &str) -> bool {
     matches!(name, "Query" | "Mutation" | "Subscription")

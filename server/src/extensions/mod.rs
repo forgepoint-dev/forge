@@ -6,19 +6,23 @@
 
 pub mod interface;
 pub mod loader;
+// pub mod runtime; // Temporarily disabled - uses complex component model
 pub mod schema;
+pub mod wasm_runtime;
+// pub mod wit_bindings; // Temporarily disabled - uses complex component model
 
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Represents a loaded extension with its metadata and runtime state
-#[derive(Debug, Clone)]
 #[allow(dead_code)] // Will be used when extension system is fully integrated
 pub struct Extension {
     pub name: String,
     pub db_path: PathBuf,
     pub schema: schema::SchemaFragment,
+    pub runtime: Arc<wasm_runtime::Extension>,
 }
 
 /// Extension manager coordinates loading and lifecycle management of extensions
@@ -82,7 +86,7 @@ mod tests {
 
     #[test]
     fn test_schema_manager_basic_operations() {
-        let mut schema_manager = schema::builder::SchemaManager::new();
+        let schema_manager = schema::builder::SchemaManager::new();
         assert!(!schema_manager.has_extensions());
         assert!(schema_manager.get_extension_schemas().is_empty());
 
@@ -175,46 +179,31 @@ impl ExtensionManager {
             format!("Failed to create extension directory: {:?}", extension_dir)
         })?;
 
-        // Load and initialize the WASM module with security constraints
-        let mut extension_instance = loader::load_wasm_module(wasm_path, &extension_dir)
-            .await
-            .with_context(|| format!("Failed to load WASM module for extension: {}", name))?;
+        // Load the WASM extension using the new runtime
+        let limits = loader::ExtensionLimits::default();
+        let extension = wasm_runtime::Extension::load(
+            wasm_path,
+            &extension_dir,
+            name.to_string(),
+            db_path.clone(),
+            &limits,
+        )
+        .await
+        .with_context(|| format!("Failed to load WASM extension: {}", name))?;
 
-        // Set extension name for metrics and logging
-        extension_instance.set_name(name.to_string());
+        // Get the schema
+        let schema_sdl = extension.schema().to_string();
 
-        // Initialize the extension with API version and capabilities
-        let config = interface::ExtensionConfig {
-            name: name.to_string(),
-            db_path: db_path.to_string_lossy().to_string(),
-            config: None,
-            api_version: "0.1.0".to_string(),
-            capabilities: vec!["basic".to_string(), "database".to_string()],
-        };
+        // Parse the schema (for now, create an empty fragment)
+        let schema = schema::SchemaFragment::default();
 
-        extension_instance
-            .init(&config)
-            .await
-            .with_context(|| format!("Failed to initialize extension: {}", name))?;
-
-        // Run database migrations
-        extension_instance
-            .migrate(&db_path.to_string_lossy())
-            .await
-            .with_context(|| format!("Failed to run migrations for extension: {}", name))?;
-
-        // Get and validate the GraphQL schema
-        let schema = extension_instance
-            .get_schema()
-            .await
-            .with_context(|| format!("Failed to get schema from extension: {}", name))?;
-
-        tracing::info!("Successfully loaded extension: {}", name);
+        tracing::info!("Successfully loaded extension: {} with schema: {}", name, schema_sdl);
 
         Ok(Extension {
             name: name.to_string(),
             db_path,
             schema,
+            runtime: Arc::new(extension),
         })
     }
 
