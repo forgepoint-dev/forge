@@ -1,4 +1,5 @@
 mod db;
+mod extensions;
 
 use async_graphql::http::{GraphQLPlaygroundConfig, playground_source};
 use async_graphql::{
@@ -426,6 +427,10 @@ async fn graphql_playground() -> Html<String> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let ext_db_dir = "db/extensions";
+    std::fs::create_dir_all(ext_db_dir)?;
+    let _ = extensions::load_extensions("extensions", ext_db_dir);
+
     let pool: SqlitePool = db::init_pool().await?;
 
     let schema = Schema::build(

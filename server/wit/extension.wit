@@ -1,0 +1,9 @@
+package local:greeter@0.1.0;
+
+interface hello {
+  hello: func() -> string;
+}
+
+world guest {
+  export hello;
+}
