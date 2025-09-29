@@ -1,7 +1,6 @@
 //! Dynamic schema management for extensions
 
-use anyhow::{Context, Result};
-use async_graphql::{SchemaBuilder, EmptySubscription};
+use anyhow::Result;
 use std::collections::HashMap;
 
 use super::{Extension, ExtensionManager};
@@ -43,7 +42,20 @@ impl SchemaManager {
             ));
         }
 
-        // In a full implementation, we would parse the SDL and check for conflicts
+        // Validate that it only contains extend directives, not root types
+        let lines: Vec<&str> = schema_sdl.lines().collect();
+        for line in lines {
+            let trimmed = line.trim();
+            if trimmed.starts_with("type Query") || 
+               trimmed.starts_with("type Mutation") || 
+               trimmed.starts_with("type Subscription") {
+                return Err(anyhow::anyhow!(
+                    "Extension '{}' cannot define root types Query, Mutation, or Subscription. Use 'extend type' instead.", 
+                    extension_name
+                ));
+            }
+        }
+
         Ok(())
     }
 
@@ -56,25 +68,24 @@ impl SchemaManager {
     pub fn create_merged_schema_sdl(&self) -> String {
         let mut merged = String::new();
         
-        // Add core schema extensions
-        merged.push_str("extend type Query {\n");
-        
-        for (extension_name, _schema_sdl) in &self.extension_schemas {
-            // Add extension fields with namespace prefixing to avoid conflicts
-            merged.push_str(&format!("  # Fields from {} extension\n", extension_name));
-            // In a full implementation, we would extract fields and add them
-            // with proper namespace prefixing like: issues_getAllIssues
-        }
-        
-        merged.push_str("}\n\n");
-        
-        // Add extension types with namespace prefixing
+        // Simply concatenate all extension schemas
+        // Extensions are responsible for using "extend type" directives properly
         for (extension_name, schema_sdl) in &self.extension_schemas {
-            merged.push_str(&format!("# Types from {} extension\n", extension_name));
+            merged.push_str(&format!("# Schema from {} extension\n", extension_name));
             merged.push_str(schema_sdl);
-            merged.push_str("\n");
+            merged.push_str("\n\n");
         }
         
         merged
+    }
+
+    /// Get schema for a specific extension
+    pub fn get_extension_schema(&self, extension_name: &str) -> Option<&String> {
+        self.extension_schemas.get(extension_name)
+    }
+
+    /// Check if any extensions are loaded
+    pub fn has_extensions(&self) -> bool {
+        !self.extension_schemas.is_empty()
     }
 }

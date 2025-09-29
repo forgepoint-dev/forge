@@ -41,7 +41,7 @@ interface extension {
 
 1. Server scans this directory for `.wasm` files at startup
 2. Each WASM module is loaded with WASI support
-3. Extension databases are created/opened at `<FORGE_DB_PATH>/forge_ext_<name>.db`
+3. Extension databases are created/opened at `<FORGE_DB_PATH>/<name>.extension.db`
 4. Extension is initialized with configuration
 5. Database migrations are run
 6. GraphQL schema is retrieved and merged with core schema
@@ -77,14 +77,14 @@ enum IssueStatus {
 }
 
 extend type Query {
-  issues_getAllIssues: [Issue!]!
-  issues_getIssue(id: ID!): Issue
+  getAllIssues: [Issue!]!
+  getIssue(id: ID!): Issue
 }
 
 extend type Mutation {
-  issues_createIssue(input: CreateIssueInput!): Issue!
-  issues_updateIssue(id: ID!, input: UpdateIssueInput!): Issue
+  createIssue(input: CreateIssueInput!): Issue!
+  updateIssue(id: ID!, input: UpdateIssueInput!): Issue
 }
 ```
 
-Note: Extension fields are prefixed with the extension name to avoid conflicts.
+Note: Extensions should carefully name their fields to avoid conflicts with core schema and other extensions.

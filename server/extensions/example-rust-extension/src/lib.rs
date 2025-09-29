@@ -64,13 +64,13 @@ impl Guest for IssuesExtension {
         }
         
         extend type Query {
-            issues_getAllIssues: [Issue!]!
-            issues_getIssue(id: ID!): Issue
+            getAllIssues: [Issue!]!
+            getIssue(id: ID!): Issue
         }
         
         extend type Mutation {
-            issues_createIssue(input: CreateIssueInput!): Issue!
-            issues_updateIssue(id: ID!, input: UpdateIssueInput!): Issue
+            createIssue(input: CreateIssueInput!): Issue!
+            updateIssue(id: ID!, input: UpdateIssueInput!): Issue
         }
         "#.to_string()
     }
@@ -91,7 +91,7 @@ impl Guest for IssuesExtension {
     fn resolve_field(field: String, args: String) -> Result<String, String> {
         // Handle GraphQL field resolution
         match field.as_str() {
-            "issues_getAllIssues" => {
+            "getAllIssues" => {
                 // In a real implementation:
                 // - Parse args JSON
                 // - Query database
@@ -110,14 +110,14 @@ impl Guest for IssuesExtension {
                 serde_json::to_string(&sample_issues)
                     .map_err(|e| format!("Serialization error: {}", e))
             }
-            "issues_getIssue" => {
+            "getIssue" => {
                 // Parse args to get issue ID
                 // Query database for specific issue
                 // Return issue or null
                 
                 Ok("null".to_string()) // No issue found
             }
-            "issues_createIssue" => {
+            "createIssue" => {
                 // Parse args to get CreateIssueInput
                 // Validate input
                 // Insert into database
@@ -125,7 +125,7 @@ impl Guest for IssuesExtension {
                 
                 Err("Not implemented".to_string())
             }
-            "issues_updateIssue" => {
+            "updateIssue" => {
                 // Parse args to get ID and UpdateIssueInput
                 // Validate input
                 // Update in database

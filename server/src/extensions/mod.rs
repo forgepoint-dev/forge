@@ -74,7 +74,7 @@ impl ExtensionManager {
     /// Load a single extension from a WASM file
     async fn load_extension(&self, name: &str, wasm_path: &PathBuf) -> Result<Extension> {
         // Create extension-specific database path
-        let db_path = self.db_path.join(format!("forge_ext_{}.db", name));
+        let db_path = self.db_path.join(format!("{}.extension.db", name));
         
         // Load and initialize the WASM module
         let mut extension_instance = loader::load_wasm_module(wasm_path).await?;
