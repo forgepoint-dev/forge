@@ -1,8 +1,9 @@
 mod db;
 
+use anyhow::Context as _;
 use async_graphql::http::{GraphQLPlaygroundConfig, playground_source};
 use async_graphql::{
-    Context, EmptySubscription, Error, ErrorExtensions, ID, InputObject, Object, Schema,
+    Context, EmptySubscription, Enum, Error, ErrorExtensions, ID, InputObject, Object, Schema,
 };
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::Router;
@@ -10,7 +11,11 @@ use axum::extract::State;
 use axum::http::{Method, StatusCode};
 use axum::response::Html;
 use axum::routing::{get, post};
+use git2::{AutotagOption, ErrorCode, FetchOptions, ObjectType};
 use sqlx::SqlitePool;
+use std::cmp::Ordering;
+use std::path::{Path, PathBuf};
+use tokio::task;
 use tower_http::cors::{Any, CorsLayer};
 use url::Url;
 
@@ -53,6 +58,361 @@ struct RepositorySummaryRow {
     id: String,
     slug: String,
     remote_url: Option<String>,
+}
+
+#[derive(Clone)]
+struct RepositoryStorage {
+    local_root: PathBuf,
+    remote_cache_root: PathBuf,
+}
+
+#[derive(Clone)]
+struct RepositoryEntriesPayload {
+    tree_path: String,
+    entries: Vec<RepositoryEntryNode>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct RepositoryEntryNode {
+    name: String,
+    path: String,
+    kind: RepositoryEntryKind,
+    size: Option<i64>,
+}
+
+#[derive(Enum, Copy, Clone, Eq, PartialEq)]
+enum RepositoryEntryKind {
+    #[graphql(name = "FILE")]
+    File,
+    #[graphql(name = "DIRECTORY")]
+    Directory,
+}
+
+#[Object]
+impl RepositoryEntriesPayload {
+    async fn tree_path(&self) -> &str {
+        &self.tree_path
+    }
+
+    async fn entries(&self) -> &[RepositoryEntryNode] {
+        &self.entries
+    }
+}
+
+#[Object]
+impl RepositoryEntryNode {
+    async fn name(&self) -> &str {
+        &self.name
+    }
+
+    async fn path(&self) -> &str {
+        &self.path
+    }
+
+    async fn kind(&self) -> RepositoryEntryKind {
+        self.kind
+    }
+
+    async fn size(&self) -> Option<i64> {
+        self.size
+    }
+}
+
+impl RepositoryStorage {
+    fn new(local_root: PathBuf, remote_cache_root: PathBuf) -> Self {
+        RepositoryStorage {
+            local_root,
+            remote_cache_root,
+        }
+    }
+
+    fn ensure_local_repository(&self, segments: &[String]) -> async_graphql::Result<PathBuf> {
+        let mut path = self.local_root.clone();
+        for segment in segments {
+            path.push(segment);
+        }
+
+        if path.is_dir() {
+            Ok(path)
+        } else {
+            Err(internal_error(format!(
+                "repository directory not found at {}",
+                path.display()
+            )))
+        }
+    }
+
+    async fn ensure_remote_repository(
+        &self,
+        record: &RepositoryRecord,
+    ) -> async_graphql::Result<PathBuf> {
+        let remote_url = record
+            .remote_url
+            .as_ref()
+            .ok_or_else(|| internal_error("remote repository missing URL"))?
+            .clone();
+        let cache_path = self.remote_cache_root.join(&record.id);
+        let parent = cache_path.parent().map(Path::to_path_buf);
+
+        let result = task::spawn_blocking(move || -> async_graphql::Result<PathBuf> {
+            if let Some(parent) = &parent {
+                std::fs::create_dir_all(parent).map_err(|err| {
+                    internal_error(format!(
+                        "failed to create remote cache directory {}: {}",
+                        parent.display(),
+                        err
+                    ))
+                })?;
+            }
+
+            if cache_path.exists() {
+                match git2::Repository::open(&cache_path) {
+                    Ok(repo) => {
+                        refresh_remote_repository_cache(&repo, &remote_url)?;
+                        return Ok(cache_path);
+                    }
+                    Err(_) => {
+                        std::fs::remove_dir_all(&cache_path).map_err(|err| {
+                            internal_error(format!(
+                                "failed to reset remote cache at {}: {}",
+                                cache_path.display(),
+                                err
+                            ))
+                        })?;
+                    }
+                }
+            }
+
+            let repo = git2::build::RepoBuilder::new()
+                .clone(&remote_url, &cache_path)
+                .map_err(|err| {
+                    internal_error(format!(
+                        "failed to clone remote repository {}: {}",
+                        remote_url, err
+                    ))
+                })?;
+
+            refresh_remote_repository_cache(&repo, &remote_url)?;
+
+            Ok(cache_path)
+        })
+        .await
+        .map_err(|err| internal_error(err))??;
+
+        Ok(result)
+    }
+}
+
+fn refresh_remote_repository_cache(
+    repo: &git2::Repository,
+    remote_url: &str,
+) -> async_graphql::Result<()> {
+    let mut remote = match repo.find_remote("origin") {
+        Ok(remote) => remote,
+        Err(err) if err.code() == ErrorCode::NotFound => repo
+            .remote("origin", remote_url)
+            .map_err(|err| {
+                internal_error(format!(
+                    "failed to configure remote {} for cache: {}",
+                    remote_url, err
+                ))
+            })?,
+        Err(err) => return Err(internal_error(err)),
+    };
+
+    let needs_url_update = remote
+        .url()
+        .map(|url| url != remote_url)
+        .unwrap_or(true);
+
+    if needs_url_update {
+        drop(remote);
+        repo.remote_set_url("origin", remote_url).map_err(|err| {
+            internal_error(format!(
+                "failed to update remote URL for {}: {}",
+                remote_url, err
+            ))
+        })?;
+
+        remote = repo
+            .find_remote("origin")
+            .map_err(|err| internal_error(err))?;
+    }
+
+    let mut fetch_options = FetchOptions::new();
+    fetch_options.download_tags(AutotagOption::All);
+
+    remote
+        .fetch::<&str>(&[], Some(&mut fetch_options), None)
+        .map_err(|err| {
+            internal_error(format!(
+                "failed to fetch updates for remote repository {}: {}",
+                remote_url, err
+            ))
+        })?;
+
+    drop(remote);
+
+    let remote_head = repo
+        .find_reference("refs/remotes/origin/HEAD")
+        .map_err(|err| {
+            internal_error(format!(
+                "failed to resolve remote HEAD for {}: {}",
+                remote_url, err
+            ))
+        })?;
+
+    let target_branch = remote_head
+        .symbolic_target()
+        .ok_or_else(|| internal_error("remote HEAD does not point to a branch"))?
+        .to_string();
+
+    drop(remote_head);
+
+    repo.set_head(&target_branch).map_err(|err| {
+        internal_error(format!(
+            "failed to update cached repository HEAD for {}: {}",
+            remote_url, err
+        ))
+    })?;
+
+    Ok(())
+}
+
+fn normalize_tree_path(tree_path: Option<String>) -> async_graphql::Result<String> {
+    let Some(tree_path) = tree_path else {
+        return Ok(String::new());
+    };
+
+    let mut segments = Vec::new();
+    for segment in tree_path.split('/') {
+        if segment.is_empty() || segment == "." {
+            continue;
+        }
+
+        if segment == ".." {
+            return Err(bad_user_input("treePath cannot traverse upwards"));
+        }
+
+        if segment.contains('\0') {
+            return Err(bad_user_input("treePath contains an invalid character"));
+        }
+
+        segments.push(segment.to_string());
+    }
+
+    Ok(segments.join("/"))
+}
+
+async fn read_repository_entries(
+    repository_path: PathBuf,
+    tree_path: String,
+) -> async_graphql::Result<Vec<RepositoryEntryNode>> {
+    task::spawn_blocking(move || list_repository_entries(&repository_path, &tree_path))
+        .await
+        .map_err(|err| internal_error(err))?
+}
+
+fn list_repository_entries(
+    repository_path: &Path,
+    tree_path: &str,
+) -> async_graphql::Result<Vec<RepositoryEntryNode>> {
+    let repo = git2::Repository::open(repository_path).map_err(|err| {
+        internal_error(format!(
+            "failed to open repository at {}: {}",
+            repository_path.display(),
+            err
+        ))
+    })?;
+
+    let head = match repo.head() {
+        Ok(head) => head,
+        Err(err) if err.code() == ErrorCode::UnbornBranch => {
+            if tree_path.is_empty() {
+                return Ok(Vec::new());
+            }
+
+            return Err(bad_user_input(format!(
+                "path `{}` not found in repository",
+                tree_path
+            )));
+        }
+        Err(err) => return Err(internal_error(err)),
+    };
+
+    let commit = head.peel_to_commit().map_err(|err| internal_error(err))?;
+    let root_tree = commit.tree().map_err(|err| internal_error(err))?;
+
+    let tree = if tree_path.is_empty() {
+        root_tree
+    } else {
+        let entry = root_tree.get_path(Path::new(tree_path)).map_err(|err| {
+            if err.code() == ErrorCode::NotFound {
+                bad_user_input(format!("path `{}` not found in repository", tree_path))
+            } else {
+                internal_error(err)
+            }
+        })?;
+
+        if entry.kind() != Some(ObjectType::Tree) {
+            return Err(bad_user_input(format!(
+                "path `{}` is not a directory",
+                tree_path
+            )));
+        }
+
+        repo.find_tree(entry.id())
+            .map_err(|err| internal_error(err))?
+    };
+
+    let mut entries = Vec::new();
+
+    for entry in tree.iter() {
+        let Some(name) = entry.name() else {
+            return Err(internal_error(
+                "repository contains entries with non-UTF-8 names",
+            ));
+        };
+
+        let name = name.to_string();
+        let full_path = if tree_path.is_empty() {
+            name.clone()
+        } else {
+            format!("{}/{}", tree_path, name)
+        };
+
+        match entry.kind() {
+            Some(ObjectType::Tree) => entries.push(RepositoryEntryNode {
+                name,
+                path: full_path,
+                kind: RepositoryEntryKind::Directory,
+                size: None,
+            }),
+            Some(ObjectType::Blob) => {
+                let blob = repo
+                    .find_blob(entry.id())
+                    .map_err(|err| internal_error(err))?;
+                entries.push(RepositoryEntryNode {
+                    name,
+                    path: full_path,
+                    kind: RepositoryEntryKind::File,
+                    size: Some(blob.size() as i64),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    entries.sort_by(|a, b| match (a.kind, b.kind) {
+        (RepositoryEntryKind::Directory, RepositoryEntryKind::File) => Ordering::Less,
+        (RepositoryEntryKind::File, RepositoryEntryKind::Directory) => Ordering::Greater,
+        _ => a
+            .name
+            .to_ascii_lowercase()
+            .cmp(&b.name.to_ascii_lowercase()),
+    });
+
+    Ok(entries)
 }
 
 #[Object]
@@ -244,6 +604,54 @@ impl QueryRoot {
             .map_err(internal_error)?;
         Ok(record.map(RepositoryNode::from))
     }
+
+    async fn browse_repository(
+        &self,
+        ctx: &Context<'_>,
+        path: String,
+        #[graphql(name = "treePath")] tree_path: Option<String>,
+    ) -> async_graphql::Result<Option<RepositoryEntriesPayload>> {
+        let pool = ctx.data::<SqlitePool>()?;
+        let storage = ctx.data::<RepositoryStorage>()?;
+
+        let segments: Vec<String> = path
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .map(|segment| segment.to_string())
+            .collect();
+
+        if segments.is_empty() {
+            return Ok(None);
+        }
+
+        for segment in &segments {
+            validate_slug(segment)?;
+        }
+
+        let record = resolve_repository_by_path(pool, &path)
+            .await
+            .map_err(internal_error)?;
+
+        let Some(record) = record else {
+            return Ok(None);
+        };
+
+        let normalized_tree_path = normalize_tree_path(tree_path)?;
+
+        let repository_path = if record.remote_url.is_some() {
+            storage.ensure_remote_repository(&record).await?
+        } else {
+            storage.ensure_local_repository(&segments)?
+        };
+
+        let entries =
+            read_repository_entries(repository_path, normalized_tree_path.clone()).await?;
+
+        Ok(Some(RepositoryEntriesPayload {
+            tree_path: normalized_tree_path,
+            entries,
+        }))
+    }
 }
 
 #[derive(InputObject)]
@@ -426,14 +834,36 @@ async fn graphql_playground() -> Html<String> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let pool: SqlitePool = db::init_pool().await?;
+    let (pool, db_root_path) = db::init_pool().await?;
+
+    let repos_root_raw = std::env::var("FORGE_REPOS_PATH")
+        .with_context(|| "FORGE_REPOS_PATH environment variable must be set".to_string())?;
+    let repos_root = db::normalize_path(repos_root_raw)?;
+
+    std::fs::create_dir_all(&repos_root).with_context(|| {
+        format!(
+            "failed to create repository root directory: {}",
+            repos_root.display()
+        )
+    })?;
+
+    let remote_cache_root = db_root_path.join("remote-cache");
+    std::fs::create_dir_all(&remote_cache_root).with_context(|| {
+        format!(
+            "failed to create remote cache directory: {}",
+            remote_cache_root.display()
+        )
+    })?;
+
+    let storage = RepositoryStorage::new(repos_root, remote_cache_root);
 
     let schema = Schema::build(
         QueryRoot::default(),
         MutationRoot::default(),
         EmptySubscription,
     )
-    .data(pool)
+    .data(pool.clone())
+    .data(storage.clone())
     .finish();
 
     let app = Router::new()

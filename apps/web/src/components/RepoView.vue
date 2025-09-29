@@ -21,6 +21,18 @@ type GroupDetails = {
   repositories: { id: string; slug: string; isRemote: boolean; remoteUrl?: string | null }[]
 }
 
+type RepositoryEntry = {
+  name: string
+  path: string
+  kind: 'FILE' | 'DIRECTORY'
+  size: number | null
+}
+
+type RepositoryEntriesResponse = {
+  treePath: string
+  entries: RepositoryEntry[]
+}
+
 const segments = computed(() => props.fullPath.split('/').filter(Boolean))
 const repoName = computed(() => segments.value[segments.value.length - 1] || '')
 const groups = computed(() => segments.value.slice(0, -1))
@@ -31,6 +43,12 @@ const groupDetails = ref<GroupDetails | null>(null)
 const loading = ref(true)
 const error = ref<string | null>(null)
 
+const treePath = ref('')
+const resolvedTreePath = ref('')
+const entries = ref<RepositoryEntry[]>([])
+const entriesLoading = ref(false)
+const entriesError = ref<string | null>(null)
+
 const isRemote = computed(() => repository.value?.isRemote ?? false)
 const remoteUrl = computed(() => repository.value?.remoteUrl ?? null)
 
@@ -39,11 +57,33 @@ const siblingRepositories = computed(() => {
   return groupDetails.value.repositories.filter((repo) => repo.id !== repository.value?.id)
 })
 
+const breadcrumbItems = computed(() => {
+  const crumbs: { label: string; path: string }[] = []
+  const rootLabel = repoName.value || 'Repository'
+  crumbs.push({ label: rootLabel, path: '' })
+
+  let current = ''
+  const segments = resolvedTreePath.value.split('/').filter(Boolean)
+  for (const segment of segments) {
+    current = current ? `${current}/${segment}` : segment
+    crumbs.push({ label: segment, path: current })
+  }
+
+  return crumbs
+})
+
+const hasEntries = computed(() => entries.value.length > 0)
+
 async function loadData(path: string) {
   loading.value = true
   error.value = null
   repository.value = null
   groupDetails.value = null
+  entries.value = []
+  entriesError.value = null
+  entriesLoading.value = false
+  treePath.value = ''
+  resolvedTreePath.value = ''
 
   try {
     const repoResponse = await graphqlRequest<{ getRepository: RepositoryDetails | null }>({
@@ -70,6 +110,8 @@ async function loadData(path: string) {
     }
 
     repository.value = repoResponse.getRepository
+
+    await loadRepositoryEntries(path, treePath.value)
 
     if (groups.value.length > 0) {
       const groupPath = groups.value.join('/')
@@ -120,6 +162,91 @@ watch(
 // Placeholder values until repo metadata expands
 const branches = ['main']
 const branch = ref('main')
+
+let entriesRequestId = 0
+
+async function loadRepositoryEntries(path: string, tree: string) {
+  const requestId = ++entriesRequestId
+  entriesLoading.value = true
+  entriesError.value = null
+
+  try {
+    const response = await graphqlRequest<{ browseRepository: RepositoryEntriesResponse | null }>({
+      query: /* GraphQL */ `
+        query BrowseRepository($path: String!, $treePath: String) {
+          browseRepository(path: $path, treePath: $treePath) {
+            treePath
+            entries {
+              name
+              path
+              kind
+              size
+            }
+          }
+        }
+      `,
+      variables: { path, treePath: tree || null },
+    })
+
+    if (requestId !== entriesRequestId) {
+      return
+    }
+
+    const payload = response.browseRepository
+    if (!payload) {
+      entries.value = []
+      entriesError.value = 'Repository contents are unavailable.'
+      resolvedTreePath.value = tree
+      return
+    }
+
+    entries.value = payload.entries
+    resolvedTreePath.value = payload.treePath
+  } catch (err) {
+    if (requestId !== entriesRequestId) {
+      return
+    }
+    entries.value = []
+    entriesError.value = err instanceof Error ? err.message : 'Failed to load repository contents'
+    resolvedTreePath.value = tree
+  } finally {
+    if (requestId === entriesRequestId) {
+      entriesLoading.value = false
+    }
+  }
+}
+
+watch(
+  treePath,
+  (next, prev) => {
+    if (!repository.value || next === prev) {
+      return
+    }
+    loadRepositoryEntries(props.fullPath, next)
+  },
+)
+
+function navigateToTree(target: string) {
+  if (treePath.value === target) return
+  treePath.value = target
+}
+
+function formatSize(size: number | null | undefined) {
+  if (size === null || size === undefined) return '—'
+  if (size < 1024) return `${size} B`
+
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let value = size
+  let unitIndex = 0
+
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024
+    unitIndex += 1
+  }
+
+  const formatted = value >= 100 || unitIndex === 0 ? Math.round(value).toString() : value.toFixed(1)
+  return `${formatted} ${units[unitIndex]}`
+}
 
 </script>
 
@@ -184,6 +311,83 @@ const branch = ref('main')
             <UiButton variant="outline">Go</UiButton>
           </div>
         </div>
+
+        <section class="rounded-lg border bg-card">
+          <div class="flex flex-col gap-2 border-b px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <h3 class="text-sm font-semibold text-muted-foreground">Repository Contents</h3>
+            <nav class="flex flex-wrap items-center gap-1 text-xs text-muted-foreground sm:text-sm">
+              <template v-for="(crumb, index) in breadcrumbItems" :key="`${crumb.path}:${index}`">
+                <button
+                  v-if="index !== breadcrumbItems.length - 1"
+                  type="button"
+                  class="rounded px-1.5 py-0.5 transition hover:text-foreground"
+                  @click="navigateToTree(crumb.path)"
+                >
+                  {{ crumb.label }}
+                </button>
+                <span
+                  v-else
+                  class="rounded px-1.5 py-0.5 font-semibold text-foreground"
+                >
+                  {{ crumb.label }}
+                </span>
+                <span v-if="index < breadcrumbItems.length - 1" class="text-muted-foreground">/</span>
+              </template>
+            </nav>
+          </div>
+          <div class="space-y-3 p-5 text-sm">
+            <div
+              v-if="entriesLoading"
+              class="rounded-md border border-dashed px-4 py-6 text-center text-muted-foreground"
+            >
+              Loading repository contents…
+            </div>
+            <div
+              v-else-if="entriesError"
+              class="rounded-md border border-destructive/50 bg-destructive/10 px-4 py-6 text-center text-destructive"
+            >
+              {{ entriesError }}
+            </div>
+            <div
+              v-else-if="!hasEntries"
+              class="rounded-md border border-dashed px-4 py-6 text-center text-muted-foreground"
+            >
+              This folder is empty.
+            </div>
+            <div v-else class="overflow-hidden rounded-md border">
+              <table class="min-w-full divide-y text-sm">
+                <thead class="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
+                  <tr>
+                    <th scope="col" class="px-4 py-2 text-left font-semibold">Name</th>
+                    <th scope="col" class="px-4 py-2 text-left font-semibold">Type</th>
+                    <th scope="col" class="px-4 py-2 text-right font-semibold">Size</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y bg-background/60">
+                  <tr v-for="entry in entries" :key="entry.path" class="transition hover:bg-muted/50">
+                    <td class="px-4 py-2">
+                      <button
+                        v-if="entry.kind === 'DIRECTORY'"
+                        type="button"
+                        class="font-medium text-left text-foreground hover:underline"
+                        @click="navigateToTree(entry.path)"
+                      >
+                        {{ entry.name }}
+                      </button>
+                      <span v-else class="text-foreground">{{ entry.name }}</span>
+                    </td>
+                    <td class="px-4 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      {{ entry.kind === 'DIRECTORY' ? 'Directory' : 'File' }}
+                    </td>
+                    <td class="px-4 py-2 text-right text-xs text-muted-foreground">
+                      {{ entry.kind === 'DIRECTORY' ? '—' : formatSize(entry.size) }}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
 
         <section class="rounded-lg border p-5 bg-card">
           <h3 class="text-sm font-semibold text-muted-foreground">Repository Details</h3>
