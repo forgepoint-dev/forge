@@ -110,6 +110,7 @@ pub async fn link_remote_repository(
 }
 
 // Raw versions for dynamic schema
+#[allow(dead_code)]
 pub async fn create_repository_raw(
     pool: &SqlitePool,
     _storage: &super::storage::RepositoryStorage,
@@ -151,6 +152,7 @@ pub async fn create_repository_raw(
     })
 }
 
+#[allow(dead_code)]
 pub async fn link_remote_repository_raw(
     pool: &SqlitePool,
     _storage: &super::storage::RepositoryStorage,

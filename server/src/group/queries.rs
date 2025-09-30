@@ -61,6 +61,7 @@ pub async fn get_group(
 }
 
 // Raw versions for dynamic schema
+#[allow(dead_code)]
 pub async fn get_all_groups_raw(pool: &SqlitePool) -> anyhow::Result<Vec<GroupRecord>> {
     let records =
         sqlx::query_as::<_, GroupRecord>("SELECT id, slug, parent FROM groups ORDER BY slug")
@@ -69,6 +70,7 @@ pub async fn get_all_groups_raw(pool: &SqlitePool) -> anyhow::Result<Vec<GroupRe
     Ok(records)
 }
 
+#[allow(dead_code)]
 pub async fn get_group_raw(pool: &SqlitePool, path: String) -> anyhow::Result<Option<GroupRecord>> {
     resolve_group_by_path(pool, &path).await
         .map_err(|e| anyhow::anyhow!(e))

@@ -4,8 +4,6 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use sqlx::SqlitePool;
 
-// use crate::extensions::wasm_runtime::GraphQLRequest; // Removed for simplified implementation
-
 use hive_router_query_planner::planner::Planner;
 use hive_router_query_planner::state::supergraph_state::SchemaDocument;
 use hive_router_query_planner::ast::operation::OperationDefinition;
@@ -15,6 +13,11 @@ use crate::repository::RepositoryStorage;
 use super::schema_composer::SchemaComposer;
 
 /// Federation coordinator that manages query planning and execution across extensions
+///
+/// NOTE: This is an experimental implementation of GraphQL federation for extensions.
+/// The main schema currently uses ExtensionFieldRegistry for simpler dynamic field resolution.
+/// Full federation support (entity resolution, type merging, etc.) is not yet complete.
+#[allow(dead_code)]
 pub struct FederationCoordinator {
     planner: Planner,
     extensions: HashMap<String, Arc<Extension>>,
@@ -24,6 +27,7 @@ pub struct FederationCoordinator {
 }
 
 impl FederationCoordinator {
+    #[allow(dead_code)]
     pub fn new(
         pool: SqlitePool,
         storage: RepositoryStorage,
@@ -74,6 +78,7 @@ impl FederationCoordinator {
     }
 
     /// Execute a GraphQL request using federation
+    #[allow(dead_code)]
     pub async fn execute(&self, request: Request) -> Response {
         match self.execute_federated(request).await {
             Ok(response) => response,
@@ -127,56 +132,35 @@ impl FederationCoordinator {
     async fn execute_query_plan(
         &self,
         _query_plan: &hive_router_query_planner::planner::plan_nodes::QueryPlan,
-        request: &Request,
+        _request: &Request,
     ) -> Result<Response> {
-        // This is a simplified implementation
-        // In reality, we'd execute the query plan step by step
-
-        // For now, let's try to determine which extension to call based on the query
-        if request.query.contains("getAllIssues") {
-            // Route to issues extension for getAllIssues query
-            if let Some(extension) = self.extensions.values().next() {
-                let result = extension.runtime
-                    .resolve_field("getAllIssues", "{}")
-                    .await?;
-
-                // Parse the JSON result and create GraphQL response
-                let json_value: serde_json::Value = serde_json::from_str(&result)?;
-                let graphql_value: Value = serde_json::from_str(&serde_json::to_string(&json_value)?)?;
-
-                let mut resp = Response::new(Value::Null);
-
-                // Create the response data structure
-                let mut data_map = async_graphql::indexmap::IndexMap::new();
-                data_map.insert(async_graphql::Name::new("getAllIssues"), graphql_value);
-                resp.data = Value::Object(data_map);
-
-                return Ok(resp);
-            }
-        }
-
-        // Fallback to core schema execution
-        self.execute_core_query(request).await
-    }
-
-    async fn execute_core_query(&self, _request: &Request) -> Result<Response> {
-        // Execute core queries directly without extensions
-        // This would use the original static schema approach for core fields
+        // TODO: Implement proper query plan execution
+        // This would involve:
+        // 1. Walking the query plan nodes
+        // 2. Executing each step (Fetch, Flatten, Parallel, Sequence)
+        // 3. Merging results from multiple extensions
+        // 4. Handling entity resolution for federated types
+        //
+        // For now, this is a placeholder. The main schema uses ExtensionFieldRegistry
+        // for dynamic field resolution instead of full federation.
 
         let mut response = Response::new(Value::Null);
         response.errors.push(async_graphql::ServerError::new(
-            "Core query execution not implemented yet",
+            "Federation query planning not fully implemented. Use build_schema() instead of create_federated_schema().",
             None,
         ));
         Ok(response)
     }
 
+
     /// Get the composed supergraph SDL
+    #[allow(dead_code)]
     pub fn supergraph_sdl(&self) -> &str {
         &self.supergraph_sdl
     }
 
     /// Get available extensions
+    #[allow(dead_code)]
     pub fn extensions(&self) -> &HashMap<String, Arc<Extension>> {
         &self.extensions
     }

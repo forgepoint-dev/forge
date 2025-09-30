@@ -55,9 +55,10 @@ pub async fn init_in_memory_pool() -> Result<(SqlitePool, PathBuf)> {
 
     sqlx::migrate!("./migrations").run(&pool).await?;
 
-    // Return a fake path for compatibility
-    let fake_path = PathBuf::from("/tmp/forge-memory-db");
-    Ok((pool, fake_path))
+    // Return a temp directory path for extension databases
+    let temp_db_path = std::env::temp_dir().join("forge-memory-db");
+    std::fs::create_dir_all(&temp_db_path)?;
+    Ok((pool, temp_db_path))
 }
 
 pub(crate) fn normalize_path<P: Into<PathBuf>>(path: P) -> Result<PathBuf> {

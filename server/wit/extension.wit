@@ -27,9 +27,24 @@ interface host-log {
 
 // Database interface provided by the host
 interface host-database {
+    // Record value can be various types
+    variant record-value {
+        null,
+        boolean(bool),
+        integer(s64),
+        float(f64),
+        text(string),
+        blob(list<u8>),
+    }
+
+    // A single row from a query result
+    record query-row {
+        values: list<record-value>,
+    }
+
     // Result types for database operations
     variant query-result {
-        success(list<record-value>),
+        success(list<query-row>),
         error(string),
     }
 
@@ -41,16 +56,6 @@ interface host-database {
     record exec-info {
         rows-affected: u64,
         last-insert-id: option<u64>,
-    }
-
-    // Record value can be various types
-    variant record-value {
-        null,
-        boolean(bool),
-        integer(s64),
-        float(f64),
-        text(string),
-        blob(list<u8>),
     }
 
     // Execute a query that returns results

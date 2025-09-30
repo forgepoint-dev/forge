@@ -6,10 +6,12 @@ use std::sync::Arc;
 use crate::extensions::ExtensionManager;
 
 /// Merges extension schemas with the core schema
+#[allow(dead_code)]
 pub struct SchemaMerger {
     extension_manager: Arc<ExtensionManager>,
 }
 
+#[allow(dead_code)]
 impl SchemaMerger {
     pub fn new(extension_manager: Arc<ExtensionManager>) -> Self {
         Self { extension_manager }
@@ -71,7 +73,7 @@ impl SchemaMerger {
     /// Generate a merged SDL containing core and extension schemas
     pub fn generate_merged_sdl(&self) -> Result<String> {
         let extension_data = self.parse_extensions()?;
-        let mut sdl = String::new();
+        let sdl = String::new();
 
         // Add extension types
         // Note: TypeDefinition doesn't implement Display, so we'd need to
@@ -88,6 +90,7 @@ impl SchemaMerger {
     }
 }
 
+#[allow(dead_code)]
 pub struct ExtensionSchemaData {
     pub query_fields: HashMap<String, (String, async_graphql_parser::types::FieldDefinition)>,
     pub mutation_fields: HashMap<String, (String, async_graphql_parser::types::FieldDefinition)>,

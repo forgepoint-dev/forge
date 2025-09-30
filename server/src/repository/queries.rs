@@ -130,6 +130,7 @@ pub async fn get_repositories_for_group(
 }
 
 // Raw versions for dynamic schema
+#[allow(dead_code)]
 pub async fn get_all_repositories_raw(pool: &SqlitePool) -> anyhow::Result<Vec<RepositoryRecord>> {
     let records = sqlx::query_as::<_, RepositoryRecord>(
         "SELECT id, slug, \"group\" as group_id, remote_url FROM repositories ORDER BY slug",
@@ -139,6 +140,7 @@ pub async fn get_all_repositories_raw(pool: &SqlitePool) -> anyhow::Result<Vec<R
     Ok(records)
 }
 
+#[allow(dead_code)]
 pub async fn get_repository_raw(
     pool: &SqlitePool,
     path: String,
@@ -147,6 +149,7 @@ pub async fn get_repository_raw(
         .map_err(|e| anyhow::anyhow!(e))
 }
 
+#[allow(dead_code)]
 pub async fn browse_repository_raw(
     pool: &SqlitePool,
     storage: &RepositoryStorage,

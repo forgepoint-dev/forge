@@ -12,10 +12,13 @@ use super::interface::ExtensionInstance;
 #[derive(Debug, Clone)]
 pub struct ExtensionLimits {
     /// Maximum memory usage per extension in bytes
+    #[allow(dead_code)]
     pub max_memory_bytes: u64,
     /// Maximum module size in bytes
+    #[allow(dead_code)]
     pub max_module_bytes: usize,
     /// Maximum stack size in bytes
+    #[allow(dead_code)]
     pub max_stack_bytes: usize,
     /// Maximum fuel for execution (if None, no limit)
     pub max_fuel: Option<u64>,
@@ -60,6 +63,7 @@ impl ExtensionLimits {
 }
 
 /// Create a secure Wasmtime engine with safety controls
+#[allow(dead_code)]
 fn create_secure_engine(limits: &ExtensionLimits) -> Result<Engine> {
     let mut config = Config::new();
 
@@ -89,11 +93,13 @@ fn create_secure_engine(limits: &ExtensionLimits) -> Result<Engine> {
 }
 
 /// Load a WASM module and create an extension instance with security constraints
+#[allow(dead_code)]
 pub async fn load_wasm_module(wasm_path: &Path, extension_dir: &Path) -> Result<ExtensionInstance> {
     load_wasm_module_with_limits(wasm_path, extension_dir, &ExtensionLimits::default()).await
 }
 
 /// Load a WASM module with custom limits
+#[allow(dead_code)]
 pub async fn load_wasm_module_with_limits(
     wasm_path: &Path,
     extension_dir: &Path,
@@ -172,6 +178,7 @@ pub async fn load_wasm_module_with_limits(
 }
 
 /// Validate that the module doesn't import dangerous host functions
+#[allow(dead_code)]
 fn validate_module_imports(module: &Module) -> Result<()> {
     for import in module.imports() {
         match import.ty() {

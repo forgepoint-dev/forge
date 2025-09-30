@@ -58,12 +58,18 @@
                 "rustc"
                 "rustfmt"
               ];
+              targets = [
+                "wasm32-wasip1"
+                "wasm32-wasip2"
+              ];
 
               mold.enable = true;
             };
 
             packages = [
               pkgs.openssl.dev
+              pkgs.cargo-component
+              pkgs.wasm-tools
             ];
           };
 

@@ -92,6 +92,7 @@ impl ExtensionFieldRegistry {
     }
 
     /// Resolve a field through the appropriate extension
+    #[allow(dead_code)]
     pub async fn resolve_field(
         &self,
         parent_type: &str,
@@ -117,7 +118,7 @@ impl ExtensionFieldRegistry {
 
         // Convert async_graphql::Value to serde_json::Value
         let args_json = serde_json::to_value(&arguments)?;
-        let ctx_json = serde_json::to_value(&context)?;
+        let _ctx_json = serde_json::to_value(&context)?;
 
         // Call the extension's resolve_field method
         let result = extension
@@ -125,8 +126,7 @@ impl ExtensionFieldRegistry {
             .resolve_field(
                 field_name,
                 &serde_json::to_string(&args_json)?,
-            )
-            .await?;
+            )?;
 
         // Convert JSON string back to async_graphql::Value
         let json_value: serde_json::Value = serde_json::from_str(&result)?;
@@ -135,11 +135,13 @@ impl ExtensionFieldRegistry {
     }
 
     /// Get registered Query fields
+    #[allow(dead_code)]
     pub fn get_query_fields(&self) -> &HashMap<String, String> {
         &self.query_fields
     }
 
     /// Get registered Mutation fields
+    #[allow(dead_code)]
     pub fn get_mutation_fields(&self) -> &HashMap<String, String> {
         &self.mutation_fields
     }

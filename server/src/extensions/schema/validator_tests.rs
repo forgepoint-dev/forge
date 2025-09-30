@@ -250,9 +250,13 @@ fn test_multiple_types_in_fragment() {
         interfaces: vec![],
     }));
 
+    // Provide pre-generated federation SDL (as extensions do in practice)
+    fragment.federation_sdl = Some("enum Status {\n  ACTIVE\n  INACTIVE\n}\n\ntype StatusHolder {\n  status: Status\n}".to_string());
+
     let sdl = fragment.to_sdl();
     // Should have multiple types separated by newlines
     assert!(sdl.contains("\n\n"));
+    assert!(sdl.contains("Status"));
 }
 
 #[test]

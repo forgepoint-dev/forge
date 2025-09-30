@@ -61,6 +61,7 @@ pub async fn create_group(
 }
 
 // Raw version for dynamic schema
+#[allow(dead_code)]
 pub async fn create_group_raw(
     pool: &SqlitePool,
     input: CreateGroupInput,
