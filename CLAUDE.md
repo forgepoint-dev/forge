@@ -115,9 +115,22 @@ Extensions are WebAssembly modules that can:
 - Manage isolated SQLite databases per-extension
 - Run with resource limits (memory, fuel)
 
-See [docs/adrs/0002-wasm-extension-system.md](docs/adrs/0002-wasm-extension-system.md) for details.
+See [docs/adrs/0002-wasm-extension-system.md](docs/adrs/0002-wasm-extension-system.md) and [docs/adrs/0003-oci-extension-distribution.md](docs/adrs/0003-oci-extension-distribution.md) for details.
 
-Extensions are loaded from `server/extensions/` directory at startup.
+#### Extension Distribution
+
+Extensions can be loaded from two sources:
+
+1. **OCI Registries** (Recommended for production): Extensions are distributed via OCI-compliant registries (GitHub Container Registry, Docker Hub, private registries) with version control, caching, and authentication.
+
+2. **Local Filesystem**: Extensions are loaded directly from `.wasm` files for development.
+
+Extensions are configured via a `forge.ron` configuration file (see `forge.example.ron`). If no configuration is provided, Forge falls back to scanning `server/extensions/` directory.
+
+**Configuration locations** (checked in order):
+- `FORGE_CONFIG_PATH` environment variable
+- `forge.ron` in current directory
+- `.forge/config.ron`
 
 ## Code Organization
 
@@ -171,11 +184,17 @@ The interface uses the WASI component model for secure, isolated execution with 
 
 Extensions are discovered and loaded at server startup:
 
-1. **Discovery**: Scan extensions directory for `.wasm` files
-2. **Instantiation**: Create Wasmtime engine with WASI support and resource limits
-3. **Initialization**: Each extension receives its own SQLite database and configuration
-4. **Schema Integration**: Extensions provide GraphQL schema fragments that are merged into the main API
-5. **Runtime**: Extensions handle field resolution requests during GraphQL query execution
+1. **Configuration Loading**: Read `forge.ron` configuration file (if present)
+2. **OCI Fetching**: Download extensions from OCI registries (with caching and authentication)
+3. **Local Resolution**: Resolve local extension file paths
+4. **Instantiation**: Create Wasmtime engine with WASI support and resource limits
+5. **Initialization**: Each extension receives its own SQLite database and configuration
+6. **Schema Integration**: Extensions provide GraphQL schema fragments that are merged into the main API
+7. **Runtime**: Extensions handle field resolution requests during GraphQL query execution
+
+**Caching**: OCI extensions are cached in `.forge/extensions/cache` with content-addressable storage (SHA256-based). Cached extensions are reused across restarts for fast startup.
+
+**Offline Mode**: When enabled (`offline_mode: true` in config), Forge uses cached extensions and doesn't fail if registries are unreachable. This is useful for air-gapped deployments or development.
 
 This process ensures extensions are isolated, secure, and can extend the API without modifying core server code.
 
@@ -185,6 +204,54 @@ This process ensures extensions are isolated, secure, and can extend the API wit
 - Fuel-based execution limits
 - Memory limits enforced by Wasmtime
 - WASI filesystem access restricted to extension database
+
+### Configuring OCI Extensions
+
+Create a `forge.ron` file with extension configuration:
+
+```ron
+Config(
+    extensions: Extensions(
+        oci: [
+            OciExtension(
+                name: "github-integration",
+                registry: "ghcr.io",
+                image: "forgepoint/extensions/github",
+                reference: Tag("v1.0.0"),  // or Digest("sha256:...")
+            ),
+        ],
+        local: [
+            LocalExtension(
+                name: "custom-extension",
+                path: "./extensions/custom.wasm",
+            ),
+        ],
+        auth: {
+            "ghcr.io": RegistryAuth(
+                username_env: Some("GHCR_USERNAME"),
+                token_env: Some("GHCR_TOKEN"),
+            ),
+        },
+        settings: Settings(
+            cache_dir: Some(".forge/extensions/cache"),
+            offline_mode: false,
+            verify_checksums: true,
+        ),
+    ),
+)
+```
+
+**Authentication**: Credentials are read from environment variables (never store in config files):
+```bash
+export GHCR_USERNAME=your-username
+export GHCR_TOKEN=your-token
+```
+
+**Reference Types**:
+- `Tag("v1.0.0")` - Mutable tag reference (can point to different versions)
+- `Digest("sha256:abc123...")` - Immutable digest (recommended for production)
+
+See `forge.example.ron` for a complete configuration example.
 
 ## Common Commands
 

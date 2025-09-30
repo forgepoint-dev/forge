@@ -36,7 +36,7 @@ pub async fn read_repository_entries(
 ) -> async_graphql::Result<Vec<RepositoryEntryNode>> {
     task::spawn_blocking(move || list_repository_entries(&repository_path, &tree_path))
         .await
-        .map_err(|err| internal_error(err))?
+        .map_err(internal_error)?
 }
 
 fn list_repository_entries(
@@ -67,15 +67,15 @@ fn list_repository_entries(
 
     let commit = head
         .peel_to_commit_in_place()
-        .map_err(|err| internal_error(err))?;
-    let root_tree = commit.tree().map_err(|err| internal_error(err))?;
+        .map_err(internal_error)?;
+    let root_tree = commit.tree().map_err(internal_error)?;
 
     let tree = if tree_path.is_empty() {
         root_tree
     } else {
         let entry = root_tree
             .lookup_entry_by_path(Path::new(tree_path))
-            .map_err(|err| internal_error(err))?
+            .map_err(internal_error)?
             .ok_or_else(|| {
                 bad_user_input(format!("path `{}` not found in repository", tree_path))
             })?;
@@ -89,14 +89,14 @@ fn list_repository_entries(
 
         entry
             .object()
-            .map_err(|err| internal_error(err))?
+            .map_err(internal_error)?
             .into_tree()
     };
 
     let mut entries = Vec::new();
 
     for entry in tree.iter() {
-        let entry = entry.map_err(|err| internal_error(err))?;
+        let entry = entry.map_err(internal_error)?;
         let name = entry.filename().to_string();
 
         let full_path = if tree_path.is_empty() {
@@ -117,7 +117,7 @@ fn list_repository_entries(
             | gix::object::tree::EntryKind::Link => {
                 let blob = repo
                     .find_object(entry.oid())
-                    .map_err(|err| internal_error(err))?
+                    .map_err(internal_error)?
                     .into_blob();
                 entries.push(RepositoryEntryNode {
                     name,

@@ -6,6 +6,7 @@ use super::validator::{ensure_unique_field_names, ensure_unique_names};
 use crate::extensions::Extension;
 
 #[allow(dead_code)] // Will be used for dynamic schema management
+#[derive(Default)]
 pub struct SchemaManager {
     extension_schemas: HashMap<String, SchemaFragment>,
     type_registry: HashMap<String, String>,
@@ -15,11 +16,7 @@ pub struct SchemaManager {
 #[allow(dead_code)] // Implementation will be used for schema operations
 impl SchemaManager {
     pub fn new() -> Self {
-        Self {
-            extension_schemas: HashMap::new(),
-            type_registry: HashMap::new(),
-            field_registry: HashMap::new(),
-        }
+        Self::default()
     }
 
     #[allow(dead_code)]

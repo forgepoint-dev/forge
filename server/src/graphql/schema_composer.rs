@@ -144,7 +144,7 @@ enum join__Graph {
         // Add subgraph entries to join__Graph enum
         let mut graph_enum_additions = Vec::new();
 
-        for (name, _schema) in &self.subgraphs {
+        for name in self.subgraphs.keys() {
             graph_enum_additions.push(format!(
                 "  {} @join__graph(name: \"{}\", url: \"internal://{}\")",
                 name.to_uppercase(),

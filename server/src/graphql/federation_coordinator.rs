@@ -61,7 +61,6 @@ impl FederationCoordinator {
             .map(|(name, ext)| {
                 (name.clone(), Arc::new(Extension {
                     name: ext.name.clone(),
-                    db_path: ext.db_path.clone(),
                     schema: ext.schema.clone(),
                     runtime: ext.runtime.clone(),
                 }))

@@ -99,8 +99,8 @@ pub fn build_schema(
     }
 
     Schema::build(
-        QueryRoot::default(),
-        MutationRoot::default(),
+        QueryRoot,
+        MutationRoot,
         EmptySubscription,
     )
     .data(pool)
@@ -132,8 +132,8 @@ pub async fn create_federated_schema(
 
     // Build the federated schema with coordinator as data
     let schema = Schema::build(
-        QueryRoot::default(),
-        MutationRoot::default(),
+        QueryRoot,
+        MutationRoot,
         EmptySubscription,
     )
     .data(pool)

@@ -1,4 +1,5 @@
 mod api;
+mod config;
 mod db;
 mod extensions;
 mod graphql;
@@ -69,8 +70,27 @@ async fn main() -> anyhow::Result<()> {
     let mut extension_manager =
         extensions::ExtensionManager::new(extensions_dir.clone(), db_root_path.clone());
 
-    if let Err(e) = extension_manager.load_extensions().await {
-        tracing::warn!("Failed to load extensions: {}", e);
+    // Load configuration and extensions
+    match config::loader::load_with_discovery() {
+        Ok(config) if !config.extensions.oci.is_empty() || !config.extensions.local.is_empty() => {
+            tracing::info!("Loading extensions from configuration");
+            if let Err(e) = extension_manager.load_extensions_from_config(&config.extensions).await {
+                tracing::error!("Failed to load extensions from config: {}", e);
+            }
+        }
+        Ok(_) => {
+            // No extensions in config, fall back to directory scanning
+            tracing::info!("No extensions in config, scanning directory");
+            if let Err(e) = extension_manager.load_extensions().await {
+                tracing::warn!("Failed to load extensions from directory: {}", e);
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Failed to load config ({}), falling back to directory scan", e);
+            if let Err(e) = extension_manager.load_extensions().await {
+                tracing::warn!("Failed to load extensions from directory: {}", e);
+            }
+        }
     }
 
     // Create the GraphQL schema

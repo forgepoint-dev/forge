@@ -1,0 +1,84 @@
+// Example Forge configuration file
+//
+// This file demonstrates how to configure Forge extensions using RON format.
+// Copy this file to `forge.ron` and customize for your deployment.
+//
+// Configuration locations (checked in order):
+//   1. Path specified in FORGE_CONFIG_PATH environment variable
+//   2. forge.ron in current directory
+//   3. .forge/config.ron
+
+Config(
+    extensions: Extensions(
+        // OCI-distributed extensions
+        // These are fetched from OCI registries (like Docker Hub, GitHub Container Registry)
+        oci: [
+            // Example: GitHub integration extension with version tag
+            OciExtension(
+                name: "github-integration",
+                registry: "ghcr.io",
+                image: "forgepoint/extensions/github",
+                reference: Tag("v1.0.0"),
+            ),
+
+            // Example: GitLab integration with immutable digest
+            // Using digests ensures exact version reproducibility
+            OciExtension(
+                name: "gitlab-integration",
+                registry: "ghcr.io",
+                image: "forgepoint/extensions/gitlab",
+                reference: Digest("sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"),
+            ),
+
+            // Example: Private registry extension
+            OciExtension(
+                name: "proprietary-extension",
+                registry: "registry.company.com",
+                image: "internal/forge-extensions/custom",
+                reference: Tag("latest"),
+            ),
+        ],
+
+        // Local filesystem extensions
+        // These are loaded directly from disk without fetching
+        local: [
+            LocalExtension(
+                name: "development-extension",
+                path: "./extensions/dev.wasm",
+            ),
+            LocalExtension(
+                name: "custom-local",
+                path: "/opt/forge/extensions/custom.wasm",
+            ),
+        ],
+
+        // Registry authentication
+        // Credentials are read from environment variables (never hardcode!)
+        auth: {
+            "ghcr.io": RegistryAuth(
+                username_env: Some("GHCR_USERNAME"),
+                token_env: Some("GHCR_TOKEN"),
+            ),
+            "registry.company.com": RegistryAuth(
+                username_env: Some("COMPANY_REGISTRY_USER"),
+                token_env: Some("COMPANY_REGISTRY_TOKEN"),
+            ),
+        },
+
+        // Extension system settings
+        settings: Settings(
+            // Directory for caching OCI-fetched extensions
+            // Default: .forge/extensions/cache
+            cache_dir: Some(".forge/extensions/cache"),
+
+            // Offline mode: use cached extensions, don't fail if registry is unreachable
+            // Default: false (fail if fetch fails, ensures deterministic startup)
+            // Set to true for air-gapped environments or development
+            offline_mode: false,
+
+            // Verify checksums of cached extensions
+            // Default: true (always verify, recommended for security)
+            verify_checksums: true,
+        ),
+    ),
+)

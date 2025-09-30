@@ -112,7 +112,6 @@ impl Extension {
     }
 
     /// Load an extension with a pre-configured database pool (for testing)
-    #[cfg(any(test, feature = "test-support"))]
     pub async fn load_with_pool(
         wasm_path: &Path,
         extension_dir: &Path,
@@ -150,33 +149,36 @@ impl Extension {
 
     /// Resolve a GraphQL field
     #[allow(dead_code)]
-    pub fn resolve_field(&self, field_name: &str, args: &str) -> Result<String> {
-        // Parse arguments
-        let arguments: serde_json::Value = serde_json::from_str(args)
-            .unwrap_or(serde_json::Value::Null);
-
+    pub async fn resolve_field(
+        &self,
+        field_name: String,
+        parent_type: String,
+        arguments: serde_json::Value,
+        context: serde_json::Value,
+        parent: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
         // Create resolve info
         let resolve_info = ResolveInfo {
-            field_name: field_name.to_string(),
-            parent_type: if field_name.starts_with("create") || field_name.starts_with("update") {
-                "Mutation".to_string()
-            } else {
-                "Query".to_string()
-            },
+            field_name,
+            parent_type,
             arguments,
-            context: serde_json::json!({}),
-            parent: None,
+            context,
+            parent,
         };
 
-        // Call the component (Mutex ensures thread safety)
-        let mut component = self.component.lock()
-            .map_err(|e| anyhow::anyhow!("Failed to lock component: {}", e))?;
-        let result = component
-            .resolve_field(resolve_info)
-            .context("Failed to resolve field in extension")?;
+        // Call the component in a blocking task (Mutex ensures thread safety)
+        let component = self.component.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            let mut comp = component.lock()
+                .map_err(|e| anyhow::anyhow!("Failed to lock component: {}", e))?;
+            comp.resolve_field(resolve_info)
+                .context("Failed to resolve field in extension")
+        })
+        .await
+        .context("Blocking task panicked")??;
 
         match result {
-            ResolveResult::Success(value) => Ok(serde_json::to_string(&value)?),
+            ResolveResult::Success(value) => Ok(value),
             ResolveResult::Error(err) => Err(anyhow::anyhow!("Extension error: {}", err)),
         }
     }
@@ -192,9 +194,6 @@ impl Extension {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use tempfile::TempDir;
-
     #[tokio::test]
     async fn test_extension_lifecycle() {
         // This test requires a real WASM file, which we'll need to build

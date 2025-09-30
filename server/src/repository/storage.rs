@@ -88,7 +88,7 @@ impl RepositoryStorage {
             Ok(cache_path)
         })
         .await
-        .map_err(|err| internal_error(err))??;
+        .map_err(internal_error)??;
 
         Ok(result)
     }

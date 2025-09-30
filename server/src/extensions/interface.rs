@@ -43,6 +43,12 @@ pub struct ExtensionMetrics {
 
 impl ExtensionMetrics {
     pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl Default for ExtensionMetrics {
+    fn default() -> Self {
         Self {
             init_calls: AtomicU64::new(0),
             schema_calls: AtomicU64::new(0),

@@ -11,10 +11,7 @@ pub struct Supervisor {
 
 impl Supervisor {
     pub fn new() -> Self {
-        Self {
-            shutdown: CancellationToken::new(),
-            tasks: JoinSet::new(),
-        }
+        Self::default()
     }
 
     pub fn spawn<F, Fut>(&mut self, name: &'static str, factory: F)
@@ -79,6 +76,15 @@ impl Supervisor {
                     self.shutdown.cancel();
                 }
             }
+        }
+    }
+}
+
+impl Default for Supervisor {
+    fn default() -> Self {
+        Self {
+            shutdown: CancellationToken::new(),
+            tasks: JoinSet::new(),
         }
     }
 }

@@ -51,39 +51,36 @@ impl ExtensionFieldRegistry {
         use async_graphql_parser::types::TypeSystemDefinition;
 
         for definition in &doc.definitions {
-            if let TypeSystemDefinition::Type(type_def) = definition {
-                match &type_def.node.kind {
-                    TypeKind::Object(obj_def) => {
-                        let type_name = &type_def.node.name.node;
+            if let TypeSystemDefinition::Type(type_def) = definition
+                && let TypeKind::Object(obj_def) = &type_def.node.kind
+            {
+                let type_name = &type_def.node.name.node;
 
-                        // Check if this is an extension of Query or Mutation
-                        if type_def.node.extend && (type_name == "Query" || type_name == "Mutation") {
-                            for field in &obj_def.fields {
-                                if type_name == "Query" {
-                                    self.query_fields.insert(
-                                        field.node.name.node.to_string(),
-                                        extension_name.to_string(),
-                                    );
-                                    tracing::info!(
-                                        "Registered Query field '{}' from extension '{}'",
-                                        field.node.name.node,
-                                        extension_name
-                                    );
-                                } else if type_name == "Mutation" {
-                                    self.mutation_fields.insert(
-                                        field.node.name.node.to_string(),
-                                        extension_name.to_string(),
-                                    );
-                                    tracing::info!(
-                                        "Registered Mutation field '{}' from extension '{}'",
-                                        field.node.name.node,
-                                        extension_name
-                                    );
-                                }
-                            }
+                // Check if this is an extension of Query or Mutation
+                if type_def.node.extend && (type_name == "Query" || type_name == "Mutation") {
+                    for field in &obj_def.fields {
+                        if type_name == "Query" {
+                            self.query_fields.insert(
+                                field.node.name.node.to_string(),
+                                extension_name.to_string(),
+                            );
+                            tracing::info!(
+                                "Registered Query field '{}' from extension '{}'",
+                                field.node.name.node,
+                                extension_name
+                            );
+                        } else if type_name == "Mutation" {
+                            self.mutation_fields.insert(
+                                field.node.name.node.to_string(),
+                                extension_name.to_string(),
+                            );
+                            tracing::info!(
+                                "Registered Mutation field '{}' from extension '{}'",
+                                field.node.name.node,
+                                extension_name
+                            );
                         }
                     }
-                    _ => {}
                 }
             }
         }
@@ -118,19 +115,22 @@ impl ExtensionFieldRegistry {
 
         // Convert async_graphql::Value to serde_json::Value
         let args_json = serde_json::to_value(&arguments)?;
-        let _ctx_json = serde_json::to_value(&context)?;
+        let ctx_json = serde_json::to_value(&context)?;
 
         // Call the extension's resolve_field method
         let result = extension
             .runtime
             .resolve_field(
-                field_name,
-                &serde_json::to_string(&args_json)?,
-            )?;
+                field_name.to_string(),
+                "Query".to_string(), // TODO: Determine parent_type from context
+                args_json,
+                ctx_json,
+                None,
+            )
+            .await?;
 
-        // Convert JSON string back to async_graphql::Value
-        let json_value: serde_json::Value = serde_json::from_str(&result)?;
-        let gql_value: Value = serde_json::from_value(json_value)?;
+        // Convert serde_json::Value to async_graphql::Value
+        let gql_value: Value = serde_json::from_value(result)?;
         Ok(gql_value)
     }
 

@@ -4,22 +4,23 @@
 //! Extensions are WASM modules that can provide GraphQL schema fragments and handle
 //! field resolution in a secure, isolated environment.
 
+pub mod cache;
 pub mod interface;
 pub mod loader;
+pub mod oci_fetcher;
 pub mod schema;
 pub mod wasm_runtime;
 pub mod wit_bindings;
 
 use anyhow::{Context, Result};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Represents a loaded extension with its metadata and runtime state
 #[allow(dead_code)] // Will be used when extension system is fully integrated
 pub struct Extension {
     pub name: String,
-    pub db_path: PathBuf,
     pub schema: schema::SchemaFragment,
     pub runtime: Arc<wasm_runtime::Extension>,
 }
@@ -28,6 +29,7 @@ pub struct Extension {
 pub struct ExtensionManager {
     extensions: HashMap<String, Extension>,
     extensions_dir: PathBuf,
+    #[allow(dead_code)]
     db_path: PathBuf,
 }
 
@@ -123,6 +125,162 @@ impl ExtensionManager {
             .ok_or_else(|| anyhow::anyhow!("Invalid filename: {:?}", wasm_path))
     }
 
+    /// Load extensions from configuration (OCI + local)
+    pub async fn load_extensions_from_config(
+        &mut self,
+        config: &crate::config::Extensions,
+    ) -> Result<()> {
+        use oci_distribution::secrets::RegistryAuth;
+
+        let mut extension_paths: Vec<(String, PathBuf)> = Vec::new();
+
+        // 1. Fetch OCI extensions if configured
+        if !config.oci.is_empty() {
+            let cache_dir = config
+                .settings
+                .cache_dir
+                .clone()
+                .unwrap_or_else(|| PathBuf::from(".forge/extensions/cache"));
+
+            let fetcher = oci_fetcher::OciExtensionFetcher::new(
+                cache_dir,
+                config.settings.offline_mode,
+                config.settings.verify_checksums,
+            )?;
+
+            for oci_ext in &config.oci {
+                // Validate extension name
+                if let Err(e) = oci_ext.validate() {
+                    tracing::error!("Invalid OCI extension name '{}': {}", oci_ext.name, e);
+                    return Err(anyhow::anyhow!(
+                        "Invalid OCI extension name '{}': {}",
+                        oci_ext.name,
+                        e
+                    ));
+                }
+
+                // Resolve authentication
+                let auth = config
+                    .auth
+                    .get(&oci_ext.registry)
+                    .and_then(|registry_auth| registry_auth.resolve_credentials())
+                    .map(|(username, password)| RegistryAuth::Basic(username, password));
+
+                match fetcher
+                    .fetch_extension(
+                        &oci_ext.registry,
+                        &oci_ext.image,
+                        oci_ext.reference.as_str(),
+                        auth.as_ref(),
+                    )
+                    .await
+                {
+                    Ok(path) => {
+                        tracing::info!(
+                            "Fetched OCI extension: {} from {}/{}:{}",
+                            oci_ext.name,
+                            oci_ext.registry,
+                            oci_ext.image,
+                            oci_ext.reference.as_str()
+                        );
+                        extension_paths.push((oci_ext.name.clone(), path));
+                    }
+                    Err(e) if config.settings.offline_mode => {
+                        tracing::warn!(
+                            "Skipping {} (offline mode, not cached): {}",
+                            oci_ext.name,
+                            e
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to fetch OCI extension {}: {}", oci_ext.name, e);
+                        return Err(e).context(format!(
+                            "Failed to fetch OCI extension: {}",
+                            oci_ext.name
+                        ));
+                    }
+                }
+            }
+        }
+
+        // 2. Add local extensions
+        for local_ext in &config.local {
+            // Validate extension name
+            if let Err(e) = local_ext.validate() {
+                tracing::error!("Invalid local extension name '{}': {}", local_ext.name, e);
+                return Err(anyhow::anyhow!(
+                    "Invalid local extension name '{}': {}",
+                    local_ext.name,
+                    e
+                ));
+            }
+
+            let path = if local_ext.path.is_absolute() {
+                local_ext.path.clone()
+            } else {
+                // Resolve relative paths from current directory
+                std::env::current_dir()?.join(&local_ext.path)
+            };
+
+            // Canonicalize and validate the path to prevent traversal attacks
+            let canonical_path = match path.canonicalize() {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!(
+                        "Cannot canonicalize path for extension '{}' ({}): {}",
+                        local_ext.name,
+                        path.display(),
+                        e
+                    );
+                    continue;
+                }
+            };
+
+            // Verify it's a file (not a directory or symlink to something weird)
+            if !canonical_path.is_file() {
+                tracing::warn!(
+                    "Extension path '{}' is not a regular file: {}",
+                    local_ext.name,
+                    canonical_path.display()
+                );
+                continue;
+            }
+
+            // Verify it has .wasm extension
+            if canonical_path.extension().and_then(|s| s.to_str()) != Some("wasm") {
+                tracing::warn!(
+                    "Extension path '{}' does not have .wasm extension: {}",
+                    local_ext.name,
+                    canonical_path.display()
+                );
+                continue;
+            }
+
+            extension_paths.push((local_ext.name.clone(), canonical_path));
+        }
+
+        // 3. Load all extensions
+        for (name, path) in extension_paths {
+            match self.load_extension(&name, &path).await {
+                Ok(ext) => {
+                    self.extensions.insert(name.clone(), ext);
+                    tracing::info!("Loaded extension: {}", name);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to load extension {}: {}", name, e);
+                }
+            }
+        }
+
+        if self.extensions.is_empty() {
+            tracing::info!("No extensions loaded");
+        } else {
+            tracing::info!("Loaded {} extension(s)", self.extensions.len());
+        }
+
+        Ok(())
+    }
+
     /// Load all WASM extensions from the extensions directory
     pub async fn load_extensions(&mut self) -> Result<()> {
         // Ensure extensions directory exists
@@ -174,11 +332,8 @@ impl ExtensionManager {
     }
 
     /// Load a single extension from a WASM file with enhanced safety
-    async fn load_extension(&self, name: &str, wasm_path: &PathBuf) -> Result<Extension> {
+    async fn load_extension(&self, name: &str, wasm_path: &Path) -> Result<Extension> {
         tracing::info!("Loading extension: {}", name);
-
-        // Create extension-specific database path
-        let db_path = self.db_path.join(format!("{}.extension.db", name));
 
         // Create extension-specific directory for isolation
         let extension_dir = self.extensions_dir.join(name);
@@ -210,7 +365,6 @@ impl ExtensionManager {
 
         Ok(Extension {
             name: name.to_string(),
-            db_path,
             schema,
             runtime: Arc::new(extension),
         })

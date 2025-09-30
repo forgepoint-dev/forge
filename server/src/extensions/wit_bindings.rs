@@ -7,7 +7,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use wasmtime::component::*;
 use wasmtime::{Config, Engine, Store};
@@ -333,11 +333,11 @@ impl self::forge::extension::host_database::Host for ExtensionState {
         // Split migrations by semicolon and execute each
         for migration in migrations.split(';') {
             let trimmed = migration.trim();
-            if !trimmed.is_empty() {
-                if let Err(e) = handle.block_on(sqlx::query(trimmed).execute(&pool)) {
-                    tracing::error!("Migration failed: {}", e);
-                    return Err(format!("Failed to run migration: {}", e));
-                }
+            if !trimmed.is_empty()
+                && let Err(e) = handle.block_on(sqlx::query(trimmed).execute(&pool))
+            {
+                tracing::error!("Migration failed: {}", e);
+                return Err(format!("Failed to run migration: {}", e));
             }
         }
 
@@ -354,8 +354,8 @@ pub struct ComponentExtension {
 impl ComponentExtension {
     /// Load a WASM component
     pub fn load(
-        wasm_path: &PathBuf,
-        extension_dir: &PathBuf,
+        wasm_path: &Path,
+        extension_dir: &Path,
         name: String,
         db_pool: SqlitePool,
     ) -> Result<Self> {
@@ -371,7 +371,7 @@ impl ComponentExtension {
             .build();
 
         // Create host with pre-initialized database pool
-        let host = ExtensionHost::new(name, extension_dir.clone());
+        let host = ExtensionHost::new(name, extension_dir.to_path_buf());
         // Store the pool
         {
             let mut pool_guard = host.db_pool.lock()
