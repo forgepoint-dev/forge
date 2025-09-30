@@ -1,0 +1,30 @@
+{
+	"name": "@forgepoint/astro-integration-issues",
+	"version": "0.1.0",
+	"type": "module",
+	"packageManager": "bun@1.1.30",
+	"main": "./src/index.ts",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"codegen": "graphql-codegen -c codegen.ts",
+		"dev": "bun run codegen --watch"
+	},
+	"dependencies": {
+		"astro": "^5.14.1",
+		"vue": "^3.4.38"
+	},
+	"devDependencies": {
+		"@graphql-codegen/cli": "^5.0.0",
+		"@graphql-codegen/client-preset": "^4.1.0",
+		"@graphql-codegen/typescript": "^4.0.1",
+		"@graphql-codegen/typescript-operations": "^4.0.1",
+		"@graphql-codegen/typescript-graphql-request": "^6.0.1",
+		"graphql": "^16.8.1"
+	},
+	"forgepoint": {
+		"extensionName": "issues",
+		"compatibleExtensionVersions": "^0.1.0"
+	}
+}

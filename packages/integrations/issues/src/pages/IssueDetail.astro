@@ -1,0 +1,20 @@
+---
+const { id } = Astro.params;
+---
+
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width" />
+		<title>Issue {id} - Forge</title>
+	</head>
+	<body>
+		<div class="container mx-auto px-4 py-8">
+			<h1 class="text-3xl font-bold mb-4">Issue {id}</h1>
+			<p class="text-gray-600">Issue detail view - to be implemented</p>
+			<a href="/issues" class="text-blue-600 hover:text-blue-800 mt-4 inline-block">
+				← Back to issues
+			</a>
+		</div>
+	</body>
+</html>

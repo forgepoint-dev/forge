@@ -58,6 +58,8 @@
                 "rustc"
                 "rustfmt"
               ];
+              # WASM targets for building extensions (packages/extensions/*)
+              # Extensions compile to wasm32-wasip1 for WASI Preview 1 support
               targets = [
                 "wasm32-wasip1"
                 "wasm32-wasip2"
@@ -68,8 +70,9 @@
 
             packages = [
               pkgs.openssl.dev
-              pkgs.cargo-component
-              pkgs.wasm-tools
+              # WASM tooling for extension development
+              pkgs.cargo-component # Component model tooling
+              pkgs.wasm-tools # WASM validation and inspection
             ];
           };
 

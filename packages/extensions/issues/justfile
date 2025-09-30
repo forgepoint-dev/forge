@@ -1,0 +1,46 @@
+# Justfile for building and publishing the issues extension
+
+# Build the extension
+build:
+    cargo build --target wasm32-wasip1 --release
+
+# Build for development (with debug symbols)
+build-dev:
+    cargo build --target wasm32-wasip1
+
+# Run tests
+test:
+    cargo test
+
+# Run clippy
+lint:
+    cargo clippy --target wasm32-wasip1 -- -D warnings
+
+# Format code
+fmt:
+    cargo fmt
+
+# Check formatting
+fmt-check:
+    cargo fmt -- --check
+
+# Clean build artifacts
+clean:
+    cargo clean
+
+# Build and copy to server extensions dir (for local testing)
+install-local: build
+    mkdir -p ../../../server/extensions_dir
+    cp target/wasm32-wasip1/release/forgepoint_extension_issues.wasm ../../../server/extensions_dir/issues.wasm
+
+# Show the size of the built WASM file
+size: build
+    ls -lh target/wasm32-wasip1/release/forgepoint_extension_issues.wasm
+
+# Validate the WASM module
+validate: build
+    wasm-tools validate target/wasm32-wasip1/release/forgepoint_extension_issues.wasm
+
+# Inspect the WASM module
+inspect: build
+    wasm-tools print target/wasm32-wasip1/release/forgepoint_extension_issues.wasm | head -n 50

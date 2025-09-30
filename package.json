@@ -3,7 +3,8 @@
 	"private": true,
 	"workspaces": [
 		"apps/*",
-		"design"
+		"design",
+		"packages/integrations/*"
 	],
 	"packageManager": "bun@1.1.30"
 }
