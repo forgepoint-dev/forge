@@ -1,0 +1,2 @@
+# Extension WASM modules go here
+# Each .wasm file will be loaded as an extension at server startup

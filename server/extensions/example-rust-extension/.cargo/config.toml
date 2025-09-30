@@ -1,0 +1,7 @@
+[target.wasm32-wasip1]
+linker = "rust-lld"
+rustflags = []
+
+[target.wasm32-wasip2]
+linker = "rust-lld"
+rustflags = []
