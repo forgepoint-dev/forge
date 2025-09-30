@@ -265,6 +265,121 @@ onMounted(async () => {
 7.  **Data Fetching**: The WASM extension executes its logic, fetches data from its database, and returns the result.
 8.  **Response**: The response travels back through the gateway to the frontend, where the Vue component updates with the fetched data.
 
+### Extension Slot System
+
+The slot system allows integrations to inject UI components into existing core pages, enabling extensions to seamlessly integrate with the core UI rather than just adding standalone routes.
+
+**Supported Slot Types:**
+
+- **Repository Tabs** (`repo-tabs`): Add tabs to repository pages (e.g., Issues, Pull Requests)
+- **Group Tabs** (`group-tabs`): Add tabs to group pages
+- **Homepage Widgets** (`homepage-widgets`): Add widgets to the forge homepage
+
+**Implementation:**
+
+The slot system uses Vite virtual modules to aggregate slot registrations from all integrations at build time:
+
+```typescript
+// apps/web/src/lib/slot-plugin.ts
+export function createSlotRegistry() {
+  return {
+    repoTabs: [],
+    groupTabs: [],
+    homepageWidgets: [],
+  };
+}
+```
+
+**Integration Usage:**
+
+Integrations register slots by receiving the `slotRegistry` as an option:
+
+```typescript
+// packages/integrations/issues/src/index.ts
+export default function issuesIntegration(options) {
+  return {
+    name: '@forgepoint/astro-integration-issues',
+    hooks: {
+      'astro:config:setup': ({ injectRoute }) => {
+        // Inject standalone routes
+        injectRoute({ pattern: '/issues', entrypoint: '...' });
+        
+        // Register repository tab slot
+        if (options?.slotRegistry) {
+          options.slotRegistry.repoTabs.push({
+            id: 'issues',
+            label: 'Issues',
+            componentPath: '@forgepoint/astro-integration-issues/components/IssuesTab.vue',
+            order: 10,
+          });
+        }
+      },
+    },
+  };
+}
+```
+
+**Configuration Example:**
+
+```javascript
+// apps/web/astro.config.mjs
+import { createSlotRegistry, createSlotPlugin } from './src/lib/slot-plugin.ts';
+import issuesIntegration from '@forgepoint/astro-integration-issues';
+
+const slotRegistry = createSlotRegistry();
+const slotPlugin = createSlotPlugin(slotRegistry);
+
+export default defineConfig({
+  integrations: [
+    vue(),
+    issuesIntegration({ slotRegistry }), // Pass registry to integration
+  ],
+  vite: {
+    plugins: [slotPlugin],
+  },
+});
+```
+
+**Slot Components:**
+
+Slot components receive context data as props, allowing them to render content specific to the current page:
+
+```vue
+<!-- IssuesTab.vue -->
+<script setup lang="ts">
+const props = defineProps<{
+  repository: {
+    id: string;
+    slug: string;
+    fullPath: string;
+    isRemote: boolean;
+    remoteUrl: string | null;
+  };
+}>();
+
+// Load issues for this specific repository
+const issues = await loadIssues(props.repository.id);
+</script>
+```
+
+**Rendering:**
+
+Core pages use the `ExtensionTabs` component to render slots alongside built-in tabs:
+
+```vue
+<ExtensionTabs :repository="repositoryContext">
+  <template #files>
+    <!-- Built-in files tab content -->
+  </template>
+</ExtensionTabs>
+```
+
+This approach provides:
+- **Type Safety**: TypeScript interfaces for context data
+- **Decoupling**: Extensions register slots without modifying core code
+- **Ordering**: Extensions can control tab order via the `order` property
+- **Hot Module Replacement**: Changes to slot components trigger HMR in development
+
 ### Version Management
 
 Backend (WASM) and frontend (Astro integration) packages are versioned and published independently to their respective registries (OCI and npm). This allows for decoupled releases.

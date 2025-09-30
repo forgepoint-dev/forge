@@ -2,7 +2,9 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import UiButton from './ui/button.vue'
 import UiInput from './ui/input.vue'
+import ExtensionTabs from './ExtensionTabs.vue'
 import { graphqlRequest } from '../lib/graphql'
+import type { RepositoryContext } from '../lib/slots'
 
 const props = defineProps<{ fullPath: string }>()
 
@@ -51,6 +53,17 @@ const entriesError = ref<string | null>(null)
 
 const isRemote = computed(() => repository.value?.isRemote ?? false)
 const remoteUrl = computed(() => repository.value?.remoteUrl ?? null)
+
+const repositoryContext = computed<RepositoryContext | null>(() => {
+  if (!repository.value) return null
+  return {
+    id: repository.value.id,
+    slug: repository.value.slug,
+    fullPath: props.fullPath,
+    isRemote: repository.value.isRemote,
+    remoteUrl: repository.value.remoteUrl ?? null,
+  }
+})
 
 const siblingRepositories = computed(() => {
   if (!groupDetails.value) return []
@@ -312,7 +325,9 @@ function formatSize(size: number | null | undefined) {
           </div>
         </div>
 
-        <section class="rounded-lg border bg-card">
+        <ExtensionTabs v-if="repositoryContext" :repository="repositoryContext">
+          <template #files>
+            <section class="rounded-lg border bg-card">
           <div class="flex flex-col gap-2 border-b px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
             <h3 class="text-sm font-semibold text-muted-foreground">Repository Contents</h3>
             <nav class="flex flex-wrap items-center gap-1 text-xs text-muted-foreground sm:text-sm">
@@ -388,6 +403,8 @@ function formatSize(size: number | null | undefined) {
             </div>
           </div>
         </section>
+          </template>
+        </ExtensionTabs>
 
         <section class="rounded-lg border p-5 bg-card">
           <h3 class="text-sm font-semibold text-muted-foreground">Repository Details</h3>
