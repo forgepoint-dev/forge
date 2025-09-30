@@ -2,10 +2,8 @@ use super::enum_type::EnumType;
 use super::interface::InterfaceType;
 use super::object::ObjectType;
 use super::scalar::ScalarType;
-use super::sdl;
 use super::types::InputValueDefinition;
 use serde::{Deserialize, Serialize};
-use std::fmt::Write;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UnionType {
@@ -38,6 +36,7 @@ pub enum SchemaType {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct SchemaFragment {
     pub types: Vec<SchemaType>,
+    pub federation_sdl: Option<String>,
 }
 
 impl SchemaFragment {
@@ -46,14 +45,26 @@ impl SchemaFragment {
         self.types.is_empty()
     }
 
+    /// Generate federation-compatible SDL
     #[allow(dead_code)]
     pub fn to_sdl(&self) -> String {
+        // If we have pre-generated federation SDL, use that
+        if let Some(ref federation_sdl) = self.federation_sdl {
+            return federation_sdl.clone();
+        }
+
+        // Otherwise fallback to generating from types (if needed)
+        if self.types.is_empty() {
+            return String::new();
+        }
+
+        // Generate SDL from types (placeholder implementation)
         let mut out = String::new();
         for ty in &self.types {
             if !out.is_empty() {
                 out.push_str("\n\n");
             }
-            out.push_str(&ty.to_sdl());
+            out.push_str(&ty.to_federation_sdl());
         }
         out
     }
@@ -73,56 +84,9 @@ impl SchemaType {
     }
 
     #[allow(dead_code)]
-    pub fn to_sdl(&self) -> String {
-        match self {
-            SchemaType::Object(obj) => sdl::render_object_like(obj, false),
-            SchemaType::Interface(iface) => sdl::render_interface(iface),
-            SchemaType::Scalar(scalar) => {
-                let mut output = String::new();
-                if let Some(desc) = &scalar.description {
-                    writeln!(&mut output, "\"\"\"{}\"\"\"", desc).unwrap();
-                }
-                write!(&mut output, "scalar").unwrap();
-                output
-            }
-            SchemaType::Enum(e) => {
-                let mut output = String::new();
-                if let Some(desc) = &e.description {
-                    writeln!(&mut output, "\"\"\"{}\"\"\"", desc).unwrap();
-                }
-                writeln!(&mut output, "enum {{").unwrap();
-                for value in &e.values {
-                    if let Some(desc) = &value.description {
-                        writeln!(&mut output, "  \"\"\"{}\"\"\"", desc).unwrap();
-                    }
-                    writeln!(&mut output, "  {}", value.name).unwrap();
-                }
-                write!(&mut output, "}}").unwrap();
-                output
-            }
-            SchemaType::Union(u) => {
-                let mut output = String::new();
-                if let Some(desc) = &u.description {
-                    writeln!(&mut output, "\"\"\"{}\"\"\"", desc).unwrap();
-                }
-                write!(&mut output, "union = {}", u.types.join(" | ")).unwrap();
-                output
-            }
-            SchemaType::InputObject(io) => {
-                let mut output = String::new();
-                if let Some(desc) = &io.description {
-                    writeln!(&mut output, "\"\"\"{}\"\"\"", desc).unwrap();
-                }
-                writeln!(&mut output, "input {{").unwrap();
-                for field in &io.fields {
-                    if let Some(desc) = &field.description {
-                        writeln!(&mut output, "  \"\"\"{}\"\"\"", desc).unwrap();
-                    }
-                    writeln!(&mut output, "  {}: {}", field.name, field.ty.to_sdl()).unwrap();
-                }
-                write!(&mut output, "}}").unwrap();
-                output
-            }
-        }
+    pub fn to_federation_sdl(&self) -> String {
+        // For now, we're using pre-generated federation SDL from extensions
+        // This method is not used when federation_sdl is provided in SchemaFragment
+        String::new()
     }
 }

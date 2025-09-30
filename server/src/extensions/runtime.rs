@@ -107,6 +107,49 @@ impl RuntimeExtension {
         component.resolve_field(info).await
     }
 
+    /// Execute a GraphQL query (if supported)
+    pub async fn execute_graphql(
+        &self,
+        query: String,
+        operation_name: Option<String>,
+        variables: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        use super::wasm_runtime::{GraphQLRequest, GraphQLResponse};
+
+        let request = GraphQLRequest {
+            query,
+            operation_name,
+            variables,
+        };
+
+        let mut component = self.component.write().await;
+
+        // Try to execute GraphQL directly if supported
+        match component.execute_graphql(request).await {
+            Ok(response) => {
+                // Convert GraphQLResponse to a standard GraphQL JSON response
+                Ok(serde_json::json!({
+                    "data": response.data,
+                    "errors": response.errors
+                }))
+            }
+            Err(e) if e.to_string().contains("does not support GraphQL execution") => {
+                // Fallback: Extension doesn't support direct GraphQL execution
+                // Return an error indicating this
+                Ok(serde_json::json!({
+                    "data": null,
+                    "errors": [{
+                        "message": "Extension does not support direct GraphQL execution",
+                        "extensions": {
+                            "code": "UNSUPPORTED_OPERATION"
+                        }
+                    }]
+                }))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     /// Shutdown the extension
     pub async fn shutdown(&self) -> Result<()> {
         let mut component = self.component.write().await;

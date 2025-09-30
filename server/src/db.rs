@@ -9,6 +9,11 @@ const FORGE_DB_FILENAME: &str = "forge.db";
 
 /// Initialize the forge metadata database, running migrations as needed.
 pub async fn init_pool() -> Result<(SqlitePool, PathBuf)> {
+    // Check for in-memory mode
+    if std::env::var("FORGE_IN_MEMORY_DB").unwrap_or_default() == "true" {
+        return init_in_memory_pool().await;
+    }
+
     let db_root =
         std::env::var("FORGE_DB_PATH").context("FORGE_DB_PATH environment variable must be set")?;
 
@@ -33,6 +38,26 @@ pub async fn init_pool() -> Result<(SqlitePool, PathBuf)> {
     sqlx::migrate!("./migrations").run(&pool).await?;
 
     Ok((pool, db_root_path))
+}
+
+/// Initialize an in-memory SQLite database for development/testing
+pub async fn init_in_memory_pool() -> Result<(SqlitePool, PathBuf)> {
+    tracing::info!("Using in-memory SQLite database");
+
+    let connect_options = SqliteConnectOptions::from_str("sqlite::memory:")?
+        .journal_mode(SqliteJournalMode::Wal)
+        .foreign_keys(true);
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)  // In-memory databases should use a single connection
+        .connect_with(connect_options)
+        .await?;
+
+    sqlx::migrate!("./migrations").run(&pool).await?;
+
+    // Return a fake path for compatibility
+    let fake_path = PathBuf::from("/tmp/forge-memory-db");
+    Ok((pool, fake_path))
 }
 
 pub(crate) fn normalize_path<P: Into<PathBuf>>(path: P) -> Result<PathBuf> {

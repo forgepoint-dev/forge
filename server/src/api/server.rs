@@ -41,3 +41,4 @@ pub async fn run_api(schema: AppSchema, shutdown: CancellationToken) -> Result<(
         .await?;
     Ok(())
 }
+

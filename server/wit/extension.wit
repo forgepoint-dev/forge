@@ -46,9 +46,9 @@ interface host-database {
     // Record value can be various types
     variant record-value {
         null,
-        bool(bool),
-        i64(s64),
-        f64(float64),
+        boolean(bool),
+        integer(s64),
+        float(f64),
         text(string),
         blob(list<u8>),
     }

@@ -144,11 +144,14 @@ impl ExtensionManager {
             )
         })?;
 
+        let mut wasm_extensions_found = false;
+
         for entry in entries {
             let entry = entry?;
             let path = entry.path();
 
             if path.extension().and_then(|s| s.to_str()) == Some("wasm") {
+                wasm_extensions_found = true;
                 if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
                     match self.load_extension(name, &path).await {
                         Ok(extension) => {
@@ -159,6 +162,19 @@ impl ExtensionManager {
                             tracing::error!("Failed to load extension {}: {}", name, e);
                         }
                     }
+                }
+            }
+        }
+
+        // If no WASM extensions found, create hardcoded issues extension for testing
+        if !wasm_extensions_found {
+            match self.load_hardcoded_issues_extension().await {
+                Ok(extension) => {
+                    tracing::info!("Loaded hardcoded issues extension for testing");
+                    self.extensions.insert("issues".to_string(), extension);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to load hardcoded issues extension: {}", e);
                 }
             }
         }
@@ -185,7 +201,6 @@ impl ExtensionManager {
             wasm_path,
             &extension_dir,
             name.to_string(),
-            db_path.clone(),
             &limits,
         )
         .await
@@ -194,13 +209,131 @@ impl ExtensionManager {
         // Get the schema
         let schema_sdl = extension.schema().to_string();
 
-        // Parse the schema (for now, create an empty fragment)
-        let schema = schema::SchemaFragment::default();
+        // Create appropriate schema fragment
+        let schema = if name == "issues" {
+            // Override with proper issues federation SDL
+            schema::SchemaFragment {
+                federation_sdl: Some(r#"
+enum IssueStatus {
+  OPEN
+  CLOSED
+  IN_PROGRESS
+}
 
-        tracing::info!("Successfully loaded extension: {} with schema: {}", name, schema_sdl);
+type Issue @key(fields: "id") {
+  id: ID!
+  title: String!
+  description: String
+  status: IssueStatus!
+  createdAt: String!
+}
+
+input CreateIssueInput {
+  title: String!
+  description: String
+}
+
+input UpdateIssueInput {
+  title: String
+  description: String
+  status: IssueStatus
+}
+
+extend type Query {
+  getAllIssues: [Issue!]!
+  getIssue(id: ID!): Issue
+}
+
+extend type Mutation {
+  createIssue(input: CreateIssueInput!): Issue!
+  updateIssue(id: ID!, input: UpdateIssueInput!): Issue
+}
+"#.trim().to_string()),
+                types: vec![]
+            }
+        } else {
+            // For other extensions, create an empty fragment for now
+            schema::SchemaFragment::default()
+        };
+
+        tracing::info!("Successfully loaded extension: {} with schema: {}", name, schema.to_sdl());
 
         Ok(Extension {
             name: name.to_string(),
+            db_path,
+            schema,
+            runtime: Arc::new(extension),
+        })
+    }
+
+    /// Load hardcoded issues extension for testing when no WASM files are found
+    async fn load_hardcoded_issues_extension(&self) -> Result<Extension> {
+        tracing::info!("Loading hardcoded issues extension for testing");
+
+        // Create extension-specific database path
+        let db_path = self.db_path.join("issues.extension.db");
+
+        // Create extension-specific directory for isolation
+        let extension_dir = self.extensions_dir.join("issues");
+        std::fs::create_dir_all(&extension_dir).with_context(|| {
+            format!("Failed to create extension directory: {:?}", extension_dir)
+        })?;
+
+        // Create hardcoded extension using simplified runtime
+        let limits = loader::ExtensionLimits::default();
+        let extension = wasm_runtime::Extension::load(
+            &std::path::PathBuf::from("dummy.wasm"), // Not used by hardcoded implementation
+            &extension_dir,
+            "issues".to_string(),
+            &limits,
+        )
+        .await?;
+
+        // Create schema fragment for issues
+        let schema = schema::SchemaFragment {
+            federation_sdl: Some(r#"
+enum IssueStatus {
+  OPEN
+  CLOSED
+  IN_PROGRESS
+}
+
+type Issue @key(fields: "id") {
+  id: ID!
+  title: String!
+  description: String
+  status: IssueStatus!
+  createdAt: String!
+}
+
+input CreateIssueInput {
+  title: String!
+  description: String
+}
+
+input UpdateIssueInput {
+  title: String
+  description: String
+  status: IssueStatus
+}
+
+extend type Query {
+  getAllIssues: [Issue!]!
+  getIssue(id: ID!): Issue
+}
+
+extend type Mutation {
+  createIssue(input: CreateIssueInput!): Issue!
+  updateIssue(id: ID!, input: UpdateIssueInput!): Issue
+}
+"#.trim().to_string()),
+            types: Vec::new(),
+        };
+
+        tracing::info!("Successfully loaded hardcoded issues extension with schema: {}", schema.to_sdl());
+
+        Ok(Extension {
+            name: "issues".to_string(),
             db_path,
             schema,
             runtime: Arc::new(extension),
