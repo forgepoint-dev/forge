@@ -70,6 +70,28 @@ mutation {
 }
 ```
 
+### Link a Remote Repository
+```graphql
+mutation {
+  linkRemoteRepository(url: "https://github.com/user/repo") {
+    id
+    slug
+    remoteUrl
+  }
+}
+```
+
+### Clone a Remote Repository
+```graphql
+mutation {
+  cloneRepository(url: "https://github.com/user/repo") {
+    id
+    slug
+    remoteUrl
+  }
+}
+```
+
 ### Browse Repository Files
 ```graphql
 query {

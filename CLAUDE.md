@@ -105,7 +105,10 @@ FORGE_DB_PATH=../.forge/db FORGE_REPOS_PATH=../.forge/repos cargo run --bin serv
 - Support for remote repositories (read-only, linked by URL)
 - File browsing with `entries(path: String)` resolver
 - GraphQL queries: `getAllRepositories`, `getRepository(path: String!)`
-- GraphQL mutations: `createRepository(input: { slug, groupId? })`, `linkRemoteRepository(url: String!)`
+- GraphQL mutations: 
+  - `createRepository(input: { slug, groupId? })` - Create a new local repository
+  - `linkRemoteRepository(url: String!)` - Link a remote repository (lazy-loads on first access)
+  - `cloneRepository(url: String!)` - Clone a remote repository immediately via HTTPS
 
 ### Extension System (WASM)
 
@@ -351,6 +354,24 @@ mutation {
     id
     slug
     group { slug }
+  }
+}
+
+# Link a remote repository (lazy-loads on first access)
+mutation {
+  linkRemoteRepository(url: "https://github.com/user/repo") {
+    id
+    slug
+    remoteUrl
+  }
+}
+
+# Clone a remote repository immediately via HTTPS
+mutation {
+  cloneRepository(url: "https://github.com/user/repo") {
+    id
+    slug
+    remoteUrl
   }
 }
 
