@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Mock } from 'vitest';
-import { config, mount } from '@vue/test-utils';
+import { mount } from '@vue/test-utils';
 import IssueList from '../components/IssueList.vue';
 
 vi.mock('../lib/client', () => ({
@@ -163,8 +163,3 @@ describe('IssueList.vue', () => {
 		expect(wrapper.text()).toContain('Select a repository to view issues');
 	});
 });
-config.global.stubs = {
-	transition: { render: () => null },
-	'transition-group': { render: () => null },
-	teleport: { render: () => null },
-};
