@@ -341,13 +341,13 @@ fn assert_repository_context(
     context_repository: Option<&str>,
     repository_id: &str,
 ) -> Result<(), String> {
-    if let Some(expected) = context_repository {
-        if expected != repository_id {
-            return Err(format!(
-                "Repository context mismatch: expected `{}`, got `{}`",
-                expected, repository_id
-            ));
-        }
+    if let Some(expected) = context_repository
+        && expected != repository_id
+    {
+        return Err(format!(
+            "Repository context mismatch: expected `{}`, got `{}`",
+            expected, repository_id
+        ));
     }
     Ok(())
 }
