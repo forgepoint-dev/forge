@@ -5,6 +5,7 @@ A single-user code forge with a GraphQL API for managing groups and repositories
 ## Features
 
 - **GraphQL API** - Complete API for managing repositories and groups
+- **CLI Tools** - Command-line interface for repository management
 - **Hierarchical Organization** - Nest repositories within groups
 - **WASM Extensions** - Secure, sandboxed plugin system
 - **Local & Remote Repositories** - Support for both local working copies and remote repository links
@@ -39,6 +40,26 @@ FORGE_DB_PATH=./.forge/db FORGE_REPOS_PATH=./.forge/repos cargo run --bin server
 ```
 
 The GraphQL playground will be available at http://localhost:8000/graphql
+
+### Using the CLI
+
+The CLI provides command-line tools for managing repositories:
+
+```bash
+# Build the CLI
+cd server
+cargo build --release --bin forge
+
+# Create a repository
+FORGE_DB_PATH=./.forge/db FORGE_REPOS_PATH=./.forge/repos \
+  ../target/release/forge repo create my-project
+
+# Link a remote repository
+FORGE_DB_PATH=./.forge/db FORGE_REPOS_PATH=./.forge/repos \
+  ../target/release/forge repo link https://github.com/torvalds/linux
+```
+
+See [server/CLI.md](server/CLI.md) for complete CLI documentation.
 
 ## Architecture
 
@@ -120,6 +141,7 @@ nix fmt  # Formats all tracked files
 
 ## Documentation
 
+- [CLI Documentation](server/CLI.md)
 - [Architecture Decision Records](docs/adrs/)
 - [Product Requirements](docs/prds/)
 - [RFCs](docs/rfcs/)
