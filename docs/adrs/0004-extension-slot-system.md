@@ -128,7 +128,7 @@ export function createSlotPlugin(registry: SlotRegistry): Plugin {
 Extensions register slots through Astro integration hooks:
 
 ```typescript
-// packages/integrations/issues/src/index.ts
+// extensions/issues/ui/src/index.ts
 export default function issuesIntegration(options) {
   return {
     name: '@forgepoint/astro-integration-issues',

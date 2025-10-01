@@ -1,0 +1,34 @@
+enum IssueStatus {
+  OPEN
+  CLOSED
+  IN_PROGRESS
+}
+
+type Issue @key(fields: "id") {
+  id: ID!
+  title: String!
+  description: String
+  status: IssueStatus!
+  createdAt: String!
+}
+
+input CreateIssueInput {
+  title: String!
+  description: String
+}
+
+input UpdateIssueInput {
+  title: String
+  description: String
+  status: IssueStatus
+}
+
+extend type Query {
+  getAllIssues: [Issue!]!
+  getIssue(id: ID!): Issue
+}
+
+extend type Mutation {
+  createIssue(input: CreateIssueInput!): Issue!
+  updateIssue(id: ID!, input: UpdateIssueInput!): Issue
+}

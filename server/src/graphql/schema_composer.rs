@@ -157,22 +157,45 @@ enum join__Graph {
     pub fn compose(&self) -> Result<String> {
         let mut supergraph = self.core_schema.clone();
 
-        // Collect extension fields to merge into Query/Mutation
+        // Collect extension fields to merge into Query/Mutation and other object types
         let mut query_extensions = Vec::new();
         let mut mutation_extensions = Vec::new();
         let mut types_to_add = Vec::new();
+        let mut type_extensions: HashMap<String, Vec<String>> = HashMap::new();
         let mut graph_entries: Vec<(String, String)> = Vec::new();
 
         // Add extension types and fields
         for (name, schema) in &self.subgraphs {
             tracing::debug!("Processing extension '{}' with schema:\n{}", name, schema);
-            let (types, query_fields, mutation_fields, graph_name) =
+            let (types, query_fields, mutation_fields, object_extensions, graph_name) =
                 self.process_extension_schema(name, schema)?;
             tracing::debug!("Processed schema for '{}'", name);
 
             types_to_add.push(types);
-            query_extensions.extend(query_fields);
-            mutation_extensions.extend(mutation_fields);
+
+            if !query_fields.is_empty() {
+                let query_block = format!(
+                    "type Query @join__type(graph: {graph_name}, extension: true) {{\n  {fields}\n}}",
+                    graph_name = graph_name,
+                    fields = query_fields.join("\n  ")
+                );
+                types_to_add.push(query_block);
+                query_extensions.extend(query_fields.clone());
+            }
+
+            if !mutation_fields.is_empty() {
+                let mutation_block = format!(
+                    "type Mutation @join__type(graph: {graph_name}, extension: true) {{\n  {fields}\n}}",
+                    graph_name = graph_name,
+                    fields = mutation_fields.join("\n  ")
+                );
+                types_to_add.push(mutation_block);
+                mutation_extensions.extend(mutation_fields.clone());
+            }
+
+            for (type_name, fields) in object_extensions {
+                type_extensions.entry(type_name).or_default().extend(fields);
+            }
             graph_entries.push((graph_name, name.clone()));
         }
 
@@ -204,9 +227,13 @@ enum join__Graph {
 
         // Add extension types
         for types in types_to_add {
-            supergraph.push_str("\n\n");
-            supergraph.push_str(&types);
+            if !types.trim().is_empty() {
+                supergraph.push_str("\n\n");
+                supergraph.push_str(&types);
+            }
         }
+
+        supergraph = Self::merge_type_extensions(&supergraph, &type_extensions);
 
         if !graph_entries.is_empty() {
             let mut join_lines = Vec::with_capacity(graph_entries.len() + 1);
@@ -236,12 +263,77 @@ enum join__Graph {
         Ok(supergraph)
     }
 
+    fn merge_type_extensions(
+        supergraph: &str,
+        type_extensions: &HashMap<String, Vec<String>>,
+    ) -> String {
+        if type_extensions.is_empty() {
+            return supergraph.to_string();
+        }
+
+        let mut result = String::with_capacity(supergraph.len());
+        let mut inside_type_block = false;
+        let mut current_type_name = String::new();
+        let mut brace_depth: i32 = 0;
+
+        for line in supergraph.lines() {
+            let trimmed = line.trim();
+
+            if !inside_type_block && trimmed.starts_with("type ") {
+                current_type_name = Self::extract_type_name(trimmed);
+                inside_type_block = true;
+                brace_depth = 0;
+            }
+
+            if inside_type_block && trimmed == "}" && brace_depth == 1 {
+                if let Some(fields) = type_extensions.get(&current_type_name) {
+                    for field in fields {
+                        result.push_str("  ");
+                        result.push_str(field);
+                        result.push('\n');
+                    }
+                }
+            }
+
+            result.push_str(line);
+            result.push('\n');
+
+            if inside_type_block {
+                let open_braces = line.chars().filter(|&c| c == '{').count() as i32;
+                let close_braces = line.chars().filter(|&c| c == '}').count() as i32;
+                brace_depth += open_braces - close_braces;
+
+                if brace_depth <= 0 {
+                    inside_type_block = false;
+                    brace_depth = 0;
+                    current_type_name.clear();
+                }
+            }
+        }
+
+        result
+    }
+
+    fn extract_type_name(line: &str) -> String {
+        line.trim_start_matches("type ")
+            .split(|c: char| c == '@' || c == '{' || c.is_whitespace())
+            .next()
+            .unwrap_or("")
+            .to_string()
+    }
+
     fn process_extension_schema(
         &self,
         subgraph_name: &str,
         schema: &str,
-    ) -> Result<(String, Vec<String>, Vec<String>, String)> {
-        // Returns: (types_string, query_fields, mutation_fields)
+    ) -> Result<(
+        String,
+        Vec<String>,
+        Vec<String>,
+        HashMap<String, Vec<String>>,
+        String,
+    )> {
+        // Returns: (types_string, query_fields, mutation_fields, object_type_fields)
 
         let graph_name = subgraph_name.to_ascii_uppercase();
 
@@ -255,6 +347,7 @@ enum join__Graph {
         let mut inside_type_block = false;
         let mut current_type_lines = Vec::new();
         let mut type_brace_depth = 0;
+        let mut object_type_extensions: HashMap<String, Vec<String>> = HashMap::new();
 
         for line in schema.lines() {
             let line = line.trim();
@@ -293,10 +386,15 @@ enum join__Graph {
                             .map(|f| format!("{} @join__field(graph: {})", f, graph_name))
                             .collect();
 
-                        if extend_type_name == "Query" {
-                            query_fields.extend(fields_with_directive);
-                        } else if extend_type_name == "Mutation" {
-                            mutation_fields.extend(fields_with_directive);
+                        match extend_type_name.as_str() {
+                            "Query" => query_fields.extend(fields_with_directive),
+                            "Mutation" => mutation_fields.extend(fields_with_directive),
+                            _ => {
+                                object_type_extensions
+                                    .entry(extend_type_name.clone())
+                                    .or_default()
+                                    .extend(fields_with_directive);
+                            }
                         }
                     }
                     continue;
@@ -346,7 +444,13 @@ enum join__Graph {
             }
         }
 
-        Ok((types, query_fields, mutation_fields, graph_name))
+        Ok((
+            types,
+            query_fields,
+            mutation_fields,
+            object_type_extensions,
+            graph_name,
+        ))
     }
 
     fn process_type_definition(&self, lines: &[String], graph_name: &str) -> String {
@@ -414,5 +518,50 @@ enum join__Graph {
 impl Default for SchemaComposer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SchemaComposer;
+
+    #[test]
+    fn merges_non_root_type_extensions_into_supergraph() {
+        let mut composer = SchemaComposer::new();
+        composer.add_subgraph(
+            "extensions".to_string(),
+            r#"
+extend type RepositoryNode {
+  issues: [Issue!]!
+}
+
+type Issue {
+  id: ID!
+}
+"#
+            .to_string(),
+        );
+
+        let supergraph = composer.compose().expect("compose supergraph");
+
+        let block_start = supergraph
+            .find("type RepositoryNode @join__type(graph: CORE) {")
+            .expect("repository block present");
+        let block_rest = &supergraph[block_start..];
+        let block_end = block_rest
+            .find("\n}\n")
+            .map(|idx| block_start + idx)
+            .expect("repository block terminator");
+        let repository_block = &supergraph[block_start..block_end];
+
+        assert!(
+            repository_block.contains("issues: [Issue!]! @join__field(graph: EXTENSIONS)"),
+            "repository block missing extension field: {}",
+            repository_block
+        );
+
+        assert!(supergraph.contains(
+            "type Issue @join__type(graph: EXTENSIONS) {\n  id: ID! @join__field(graph: EXTENSIONS)\n}"
+        ));
     }
 }

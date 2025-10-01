@@ -568,15 +568,15 @@ impl SubgraphExecutor for CoreSubgraphExecutor {
             Ok(json) => match sonic_rs::to_vec(&json) {
                 Ok(bytes) => Bytes::from(bytes),
                 Err(err) => {
-                    let body = graphql_error_body(format!(
+                    let body = graphql_error_body(JsonValue::String(format!(
                         "failed to serialize core subgraph response: {}",
                         err
-                    ));
+                    )));
                     Bytes::from(serde_json::to_vec(&body).expect("serialization failed"))
                 }
             },
             Err(err) => {
-                let body = graphql_error_body(err.to_string());
+                let body = graphql_error_body(JsonValue::String(err.to_string()));
                 Bytes::from(serde_json::to_vec(&body).expect("serialization failed"))
             }
         }

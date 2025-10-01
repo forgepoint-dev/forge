@@ -88,27 +88,29 @@ graph LR
 packages/
 ├── wit/
 │   └── extension.wit              # Shared WIT interface for all extensions
-├── extensions/
-│   └── issues/
-│       ├── Cargo.toml             # name = "forgepoint-extension-issues"
-│       ├── src/
-│       │   └── lib.rs             # WASM extension implementation
-│       └── justfile               # Build/test/publish commands
-└── integrations/
+└── extensions/
     └── issues/
-        ├── package.json           # @forgepoint/astro-integration-issues
-        ├── codegen.ts             # GraphQL codegen configuration
-        ├── src/
-        │   ├── index.ts           # Astro integration entry point
-        │   ├── components/        # Vue components for issues UI
-        │   ├── pages/             # Astro pages for routes
-        │   └── lib/               # GraphQL client and generated types
-        └── tsconfig.json
+        ├── api/
+        │   ├── Cargo.toml         # name = "forgepoint-extension-issues"
+        │   ├── src/
+        │   │   └── lib.rs         # WASM extension implementation
+        │   └── justfile           # Build/test/publish commands
+        ├── shared/
+        │   └── schema.graphql     # Canonical GraphQL schema fragment
+        └── ui/
+            ├── package.json       # @forgepoint/astro-integration-issues
+            ├── codegen.ts         # GraphQL codegen configuration
+            ├── src/
+            │   ├── index.ts       # Astro integration entry point
+            │   ├── components/    # Vue components for issues UI
+            │   ├── pages/         # Astro pages for routes
+            │   └── lib/           # GraphQL client and generated types
+            └── tsconfig.json
 ```
 
 ### WASM Extension (Backend)
 
-- **Location**: `packages/extensions/issues/`
+- **Location**: `extensions/issues/api/`
 - **Capabilities**: Implements the WIT interface, provides a GraphQL schema fragment, resolves fields, and manages its own data persistence.
 - **Build**: Built to `issues.wasm` via `cargo build --target wasm32-wasip1 --release`.
 - **Distribution**: Published to an OCI registry (e.g., `ghcr.io/forgepoint-dev/extensions/issues:v1.0.0`).
@@ -131,7 +133,7 @@ Config(
 
 ### Astro Integration (Frontend)
 
-- **Location**: `packages/integrations/issues/`
+- **Location**: `extensions/issues/ui/`
 - **Capabilities**: An Astro integration that injects routes, registers UI components, and provides a type-safe GraphQL client for the extension's API.
 - **Distribution**: Published to npm as `@forgepoint/astro-integration-issues`.
 
@@ -169,7 +171,7 @@ To ensure type safety and a superior developer experience, each integration pack
 The generated SDK provides type-safe functions for interacting with the API, eliminating manual query construction and type definitions.
 
 ```typescript
-// packages/integrations/issues/src/lib/client.ts
+// extensions/issues/ui/src/lib/client.ts
 import { getSdk } from './generated/graphql';
 import { graphqlRequest } from 'forge-web/lib/graphql'; // Generic request function from core app
 
@@ -191,7 +193,7 @@ export const sdk = getSdk(client);
 Components use the generated SDK to fetch data, resulting in cleaner, more maintainable code.
 
 ```vue
-<!-- packages/integrations/issues/src/components/IssueList.vue -->
+<!-- extensions/issues/ui/src/components/IssueList.vue -->
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import { sdk } from '../lib/client';
@@ -233,7 +235,7 @@ onMounted(async () => {
 {
   "workspaces": [
     "apps/*",
-    "packages/integrations/*"
+    "extensions/*/ui"
   ]
 }
 ```
@@ -296,7 +298,7 @@ export function createSlotRegistry() {
 Integrations register slots by receiving the `slotRegistry` as an option:
 
 ```typescript
-// packages/integrations/issues/src/index.ts
+// extensions/issues/ui/src/index.ts
 export default function issuesIntegration(options) {
   return {
     name: '@forgepoint/astro-integration-issues',
@@ -435,12 +437,12 @@ To manage compatibility, the frontend package will declare which backend version
 - [ ] Update monorepo configuration (`package.json`, `flake.nix`).
 
 ### Phase 2: WASM Extension Migration (Week 2)
-- [ ] Move `server/extensions/example-rust-extension` to `packages/extensions/issues`.
+- [ ] Move `server/extensions/example-rust-extension` to `extensions/issues/api`.
 - [ ] Update `Cargo.toml` and WIT binding paths.
 - [ ] Test local WASM build and loading.
 
 ### Phase 3: Astro Integration Creation (Week 3-4)
-- [ ] Create `packages/integrations/issues` package.
+- [ ] Create `extensions/issues/ui` package.
 - [ ] Implement Astro integration entry point (`index.ts`).
 - [ ] Set up `graphql-codegen` and create the initial `client.ts`.
 - [ ] Create Vue components and Astro pages, using the generated SDK.

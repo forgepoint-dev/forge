@@ -5,15 +5,15 @@ echo "🚀 Starting Forgepoint with Extensions..."
 echo ""
 
 # Build WASM extension if needed
-if [ ! -f "server/extensions/issues.wasm" ] || [ "packages/extensions/issues/src/lib.rs" -nt "server/extensions/issues.wasm" ]; then
+if [ ! -f "server/extensions/issues.wasm" ] || [ "extensions/issues/api/src/lib.rs" -nt "server/extensions/issues.wasm" ]; then
     echo "📦 Building Issues extension (WASM)..."
-    cd packages/extensions/issues
+    cd extensions/issues/api
     cargo build --target wasm32-wasip1 --release
     cd ../../..
 
     echo "📋 Copying WASM to server/extensions/..."
     mkdir -p server/extensions
-    cp packages/extensions/issues/target/wasm32-wasip1/release/forgepoint_extension_issues.wasm \
+    cp extensions/issues/api/target/wasm32-wasip1/release/forgepoint_extension_issues.wasm \
        server/extensions/issues.wasm
     echo "✅ Extension built successfully!"
     echo ""

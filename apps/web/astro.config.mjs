@@ -5,7 +5,7 @@ import tailwind from "@astrojs/tailwind";
 import { createSlotRegistry, createSlotPlugin } from "./src/lib/slot-plugin.ts";
 // Import issues integration from workspace (for local development)
 // In production, use: import issuesIntegration from '@forgepoint/astro-integration-issues';
-import issuesIntegration from "../../packages/integrations/issues/src/index.ts";
+import issuesIntegration from "../../extensions/issues/ui/src/index.ts";
 
 const slotRegistry = createSlotRegistry();
 const slotPlugin = createSlotPlugin(slotRegistry);

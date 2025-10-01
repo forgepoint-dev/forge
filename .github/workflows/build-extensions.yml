@@ -4,12 +4,12 @@ on:
   push:
     branches: [main]
     paths:
-      - 'packages/extensions/**'
+      - 'extensions/**'
       - 'packages/wit/**'
       - '.github/workflows/build-extensions.yml'
   pull_request:
     paths:
-      - 'packages/extensions/**'
+      - 'extensions/**'
       - 'packages/wit/**'
       - '.github/workflows/build-extensions.yml'
 
@@ -27,22 +27,22 @@ jobs:
       - uses: DeterminateSystems/determinate-nix-action@main
 
       - name: Build ${{ matrix.extension }} extension
-        working-directory: packages/extensions/${{ matrix.extension }}
+        working-directory: extensions/${{ matrix.extension }}/api
         run: |
           nix develop --impure -c cargo build --target wasm32-wasip1 --release
 
       - name: Run tests
-        working-directory: packages/extensions/${{ matrix.extension }}
+        working-directory: extensions/${{ matrix.extension }}/api
         run: |
           nix develop --impure -c cargo test
 
       - name: Check formatting
-        working-directory: packages/extensions/${{ matrix.extension }}
+        working-directory: extensions/${{ matrix.extension }}/api
         run: |
           nix develop --impure -c cargo fmt --check
 
       - name: Run clippy
-        working-directory: packages/extensions/${{ matrix.extension }}
+        working-directory: extensions/${{ matrix.extension }}/api
         run: |
           nix develop --impure -c cargo clippy -- -D warnings
 
@@ -50,7 +50,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.extension }}-extension
-          path: packages/extensions/${{ matrix.extension }}/target/wasm32-wasip1/release/*.wasm
+          path: extensions/${{ matrix.extension }}/api/target/wasm32-wasip1/release/*.wasm
           retention-days: 7
 
   publish-oci:
@@ -84,7 +84,7 @@ jobs:
 
       - name: Extract version
         id: version
-        working-directory: packages/extensions/${{ matrix.extension }}
+        working-directory: extensions/${{ matrix.extension }}/api
         run: |
           VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
           echo "version=$VERSION" >> $GITHUB_OUTPUT

@@ -1,11 +1,11 @@
 # Extensions Directory (DEPRECATED)
 
-**⚠️ DEPRECATION NOTICE:** This directory is deprecated as of 2025-09-30. New extensions should be created in `packages/extensions/` following the Extension Package Architecture (PRD-0002).
+**⚠️ DEPRECATION NOTICE:** This directory is deprecated as of 2025-09-30. New extensions should live under `extensions/<extension-name>/{api,ui,shared}` following the Extension Package Architecture (PRD-0002).
 
 **For new extension development, see:**
 - [docs/guides/creating-extensions.md](../../docs/guides/creating-extensions.md)
 - [docs/prds/0002-extension-packages.md](../../docs/prds/0002-extension-packages.md)
-- [packages/extensions/issues/](../../packages/extensions/issues/) - Reference implementation
+- [extensions/issues/](../../extensions/issues/) - Reference implementation
 
 ---
 
@@ -72,16 +72,16 @@ interface extension {
 
 **Existing extensions in this directory will continue to work** but should be migrated to the new structure:
 
-1. Move extension source to `packages/extensions/<extension-name>/`
+1. Move extension source to `extensions/<extension-name>/api`
 2. Update build configuration to use `justfile` pattern
-3. Create corresponding Astro integration in `packages/integrations/<extension-name>/`
+3. Create corresponding Astro integration in `extensions/<extension-name>/ui`
 4. Configure OCI distribution (optional but recommended)
 
 See [docs/guides/creating-extensions.md](../../docs/guides/creating-extensions.md) for complete migration guide.
 
 ## Development (Legacy)
 
-⚠️ **For new extensions, use `packages/extensions/` instead.**
+⚠️ **For new extensions, use the `extensions/<extension-name>/{api,ui,shared}` structure instead.**
 
 To create a legacy extension:
 

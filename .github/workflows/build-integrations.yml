@@ -4,11 +4,11 @@ on:
   push:
     branches: [main]
     paths:
-      - 'packages/integrations/**'
+      - 'extensions/**'
       - '.github/workflows/build-integrations.yml'
   pull_request:
     paths:
-      - 'packages/integrations/**'
+      - 'extensions/**'
       - '.github/workflows/build-integrations.yml'
 
 jobs:
@@ -27,20 +27,20 @@ jobs:
           bun-version: 1.1.30
 
       - name: Install dependencies
-        working-directory: packages/integrations/${{ matrix.integration }}
+        working-directory: extensions/${{ matrix.integration }}/ui
         run: bun install
 
       - name: Run tests
-        working-directory: packages/integrations/${{ matrix.integration }}
+        working-directory: extensions/${{ matrix.integration }}/ui
         run: bun run test
 
       - name: Build package
-        working-directory: packages/integrations/${{ matrix.integration }}
+        working-directory: extensions/${{ matrix.integration }}/ui
         run: bun run build
         continue-on-error: true
 
       - name: Check types
-        working-directory: packages/integrations/${{ matrix.integration }}
+        working-directory: extensions/${{ matrix.integration }}/ui
         run: bunx tsc --noEmit
         continue-on-error: true
 
@@ -48,7 +48,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.integration }}-integration
-          path: packages/integrations/${{ matrix.integration }}/dist/
+          path: extensions/${{ matrix.integration }}/ui/dist/
           retention-days: 7
         continue-on-error: true
 
@@ -73,12 +73,12 @@ jobs:
           bun-version: 1.1.30
 
       - name: Install dependencies
-        working-directory: packages/integrations/${{ matrix.integration }}
+        working-directory: extensions/${{ matrix.integration }}/ui
         run: bun install
 
       - name: Extract version
         id: version
-        working-directory: packages/integrations/${{ matrix.integration }}
+        working-directory: extensions/${{ matrix.integration }}/ui
         run: |
           VERSION=$(jq -r '.version' package.json)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
@@ -89,7 +89,7 @@ jobs:
         if: secrets.NPM_TOKEN != ''
 
       - name: Publish to npm
-        working-directory: packages/integrations/${{ matrix.integration }}
+        working-directory: extensions/${{ matrix.integration }}/ui
         run: |
           npm publish --access public
         if: secrets.NPM_TOKEN != ''

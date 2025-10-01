@@ -12,3 +12,6 @@
 *.db-shm
 *.db-wal
 *.db-journal
+
+.gemini/
+gha-creds-*.json

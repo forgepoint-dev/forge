@@ -58,7 +58,7 @@
                 "rustc"
                 "rustfmt"
               ];
-              # WASM targets for building extensions (packages/extensions/*)
+              # WASM targets for building extensions (extensions/*/api)
               # Extensions compile to wasm32-wasip1 for WASI Preview 1 support
               targets = [
                 "wasm32-wasip1"

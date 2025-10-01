@@ -14,9 +14,12 @@ use hive_router_plan_executor::introspection::schema::{SchemaMetadata, SchemaWit
 use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
 use hive_router_plan_executor::variables::collect_variables;
 use hive_router_query_planner::ast::normalization::normalize_operation;
-use hive_router_query_planner::planner::{Planner, plan_nodes::QueryPlan};
+use hive_router_query_planner::planner::{plan_nodes::QueryPlan, Planner};
 use hive_router_query_planner::state::supergraph_state::SchemaDocument;
-use hive_router_query_planner::utils::parsing::safe_parse_operation;
+use hive_router_query_planner::utils::{
+    cancellation::CancellationToken,
+    parsing::safe_parse_operation,
+};
 use serde_json::Value as JsonValue;
 use sonic_rs::Value as SonicValue;
 use sqlx::SqlitePool;
@@ -132,10 +135,12 @@ impl RouterState {
                 node: None,
             }
         } else {
+            let cancellation_token = CancellationToken::new();
             self.planner
                 .plan_from_normalized_operation(
                     &partitioned.downstream_operation,
                     Default::default(),
+                    &cancellation_token,
                 )
                 .map_err(|e| anyhow!("Query planning failed: {e}"))?
         };
@@ -163,7 +168,7 @@ impl RouterState {
                 Ok(json)
             }
             Err(err) => {
-                let error_body = graphql_error_body(err.to_string());
+                let error_body = graphql_error_body(JsonValue::String(err.to_string()));
                 Ok(error_body)
             }
         }
@@ -203,12 +208,12 @@ impl GraphQLExecutionRequest {
     }
 }
 
-pub(super) fn graphql_error_body(message: String) -> JsonValue {
+pub(super) fn graphql_error_body(message: JsonValue) -> JsonValue {
     JsonValue::Object(serde_json::Map::from_iter([(
         "errors".to_string(),
         JsonValue::Array(vec![JsonValue::Object(serde_json::Map::from_iter([(
             "message".to_string(),
-            JsonValue::String(message),
+            message,
         )]))]),
     )]))
 }

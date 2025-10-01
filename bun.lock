@@ -18,7 +18,7 @@
         "vue": "^3.4.38",
       },
       "devDependencies": {
-        "@playwright/test": "^1.47.0",
+        "@playwright/test": "^1.55.1",
         "@vitest/ui": "^2.0.0",
         "vitest": "^2.0.0",
       },
@@ -47,7 +47,7 @@
         "vue-tsc": "^3.0.7",
       },
     },
-    "packages/integrations/issues": {
+    "extensions/issues/ui": {
       "name": "@forgepoint/astro-integration-issues",
       "version": "0.1.0",
       "dependencies": {
@@ -276,7 +276,7 @@
 
     "@fastify/busboy": ["@fastify/busboy@3.2.0", "", {}, "sha512-m9FVDXU3GT2ITSe0UaMA5rU3QkfC/UXtCU8y0gSN/GugTqtVldOBWIB5V6V3sbmenVZUIpU6f+mPEO2+m5iTaA=="],
 
-    "@forgepoint/astro-integration-issues": ["@forgepoint/astro-integration-issues@workspace:packages/integrations/issues"],
+    "@forgepoint/astro-integration-issues": ["@forgepoint/astro-integration-issues@workspace:extensions/issues/ui"],
 
     "@graphql-codegen/add": ["@graphql-codegen/add@5.0.3", "", { "dependencies": { "@graphql-codegen/plugin-helpers": "^5.0.3", "tslib": "~2.6.0" }, "peerDependencies": { "graphql": "^0.8.0 || ^0.9.0 || ^0.10.0 || ^0.11.0 || ^0.12.0 || ^0.13.0 || ^14.0.0 || ^15.0.0 || ^16.0.0" } }, "sha512-SxXPmramkth8XtBlAHu4H4jYcYXM/o3p01+psU+0NADQowA8jtYkK6MW5rV6T+CxkEaNZItfSmZRPgIuypcqnA=="],
 

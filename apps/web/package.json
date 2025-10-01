@@ -26,6 +26,6 @@
 	"devDependencies": {
 		"vitest": "^2.0.0",
 		"@vitest/ui": "^2.0.0",
-		"@playwright/test": "^1.47.0"
+		"@playwright/test": "^1.55.1"
 	}
 }

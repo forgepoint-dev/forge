@@ -6,12 +6,14 @@ use serde::{Deserialize, Serialize};
 
 wit_bindgen::generate!({
     world: "extension",
-    path: "../../../packages/wit",
+    path: "../../../../packages/wit",
 });
 
 use exports::forge::extension::extension_api::{Config, ExtensionInfo, Guest, ResolveInfo, ResolveResult};
 use forge::extension::host_database::{self, RecordValue};
 use forge::extension::host_log::{self, LogLevel};
+
+const SCHEMA: &str = include_str!("../../shared/schema.graphql");
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Issue {
@@ -70,42 +72,7 @@ impl Guest for IssuesExtension {
     }
 
     fn get_schema() -> String {
-        r#"
-enum IssueStatus {
-  OPEN
-  CLOSED
-  IN_PROGRESS
-}
-
-type Issue @key(fields: "id") {
-  id: ID!
-  title: String!
-  description: String
-  status: IssueStatus!
-  createdAt: String!
-}
-
-input CreateIssueInput {
-  title: String!
-  description: String
-}
-
-input UpdateIssueInput {
-  title: String
-  description: String
-  status: IssueStatus
-}
-
-extend type Query {
-  getAllIssues: [Issue!]!
-  getIssue(id: ID!): Issue
-}
-
-extend type Mutation {
-  createIssue(input: CreateIssueInput!): Issue!
-  updateIssue(id: ID!, input: UpdateIssueInput!): Issue
-}
-"#.trim().to_string()
+        SCHEMA.trim().to_string()
     }
 
     fn resolve_field(info: ResolveInfo) -> ResolveResult {

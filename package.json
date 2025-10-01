@@ -4,7 +4,7 @@
 	"workspaces": [
 		"apps/*",
 		"design",
-		"packages/integrations/*"
+		"extensions/*/ui"
 	],
 	"packageManager": "bun@1.1.30"
 }

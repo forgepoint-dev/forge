@@ -12,8 +12,8 @@ This guide walks you through creating a complete extension for Forgepoint with b
 
 A complete extension consists of two packages:
 
-1. **WASM Extension** (`packages/extensions/your-extension/`): Rust code compiled to WebAssembly, extends the GraphQL API
-2. **Astro Integration** (`packages/integrations/your-extension/`): TypeScript/Vue components, extends the frontend UI
+1. **WASM Extension** (`extensions/your-extension/api/`): Rust code compiled to WebAssembly, extends the GraphQL API
+2. **Astro Integration** (`extensions/your-extension/ui/`): TypeScript/Vue components, extends the frontend UI
 
 Both packages are versioned independently and distributed through different channels (OCI for WASM, npm for frontend).
 
@@ -22,9 +22,9 @@ Both packages are versioned independently and distributed through different chan
 ### Step 1: Create the Package Structure
 
 ```bash
-cd packages/extensions
-mkdir my-feature
-cd my-feature
+cd extensions
+mkdir -p my-feature/api
+cd my-feature/api
 ```
 
 ### Step 2: Create Cargo.toml
@@ -264,7 +264,7 @@ Config(
         local: [
             LocalExtension(
                 name: "my-feature",
-                path: "./packages/extensions/my-feature/target/wasm32-wasip1/release/forgepoint_extension_my_feature.wasm",
+                path: "./extensions/my-feature/api/target/wasm32-wasip1/release/forgepoint_extension_my_feature.wasm",
             ),
         ],
     ),
@@ -296,9 +296,9 @@ query {
 ### Step 1: Create Package Structure
 
 ```bash
-cd packages/integrations
-mkdir my-feature
-cd my-feature
+cd extensions/my-feature
+mkdir -p ui
+cd ui
 bun init -y
 ```
 
@@ -569,7 +569,7 @@ export default function myFeatureIntegration(
 
 ### Step 9: Create README
 
-Create `README.md` with installation and usage instructions (see `packages/integrations/issues/README.md` as template).
+Create `README.md` with installation and usage instructions (see `extensions/issues/README.md` as template).
 
 ### Step 10: Generate Types and Test
 
@@ -607,7 +607,7 @@ export default defineConfig({
 ### Publish WASM to OCI Registry
 
 ```bash
-cd packages/extensions/my-feature
+cd extensions/my-feature/api
 just publish 0.1.0
 crane push my-feature-0.1.0.tar ghcr.io/your-org/extensions/my-feature:v0.1.0
 ```
@@ -615,7 +615,7 @@ crane push my-feature-0.1.0.tar ghcr.io/your-org/extensions/my-feature:v0.1.0
 ### Publish Integration to npm
 
 ```bash
-cd packages/integrations/my-feature
+cd extensions/my-feature/ui
 npm publish --access public
 ```
 
@@ -642,5 +642,5 @@ npm publish --access public
 ## Next Steps
 
 - Read [ADR-0004](../adrs/0004-extension-slot-system.md) for slot system details
-- Review [Issues Extension](../../packages/integrations/issues/) as reference
+- Review [Issues Extension](../../extensions/issues/) as reference
 - Check [PRD-0002](../prds/0002-extension-packages.md) for architecture overview
