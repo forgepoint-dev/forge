@@ -171,6 +171,17 @@ async fn auth_authorize_handler(
     }
 }
 
+async fn auth_authorize_handler(
+    State(app_state): State<AppState>,
+    form: axum::Form<auth_handlers::LoginForm>,
+) -> axum::response::Response {
+    if let Some(auth_state) = app_state.auth {
+        auth_handlers::authorize_handler(State(auth_state), form).await.into_response()
+    } else {
+        (StatusCode::NOT_FOUND, "Authentication not configured").into_response()
+    }
+}
+
 async fn auth_callback_handler(
     State(app_state): State<AppState>,
     query: axum::extract::Query<auth_handlers::OAuthCallback>,
