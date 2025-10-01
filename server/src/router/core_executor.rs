@@ -24,7 +24,7 @@ use crate::repository::{
     mutations::{CreateRepositoryInput, create_repository_raw, link_remote_repository_raw},
     queries::{
         browse_repository_raw, get_all_repositories_raw, get_repository_raw,
-        list_repository_branches_raw, read_repository_file_raw,
+        list_repository_branches_raw, read_repository_file_raw, get_repository_readme_html,
     },
     storage::RepositoryStorage,
 };
@@ -220,7 +220,7 @@ impl CoreSubgraphExecutor {
                 let mut items = Vec::with_capacity(records.len());
                 for record in records {
                     items.push(
-                        self.project_repository_node(&record, &field.selection_set, fragments)
+                        self.project_repository_node(&record, &field.selection_set, fragments, variables)
                             .await?,
                     );
                 }
@@ -235,7 +235,7 @@ impl CoreSubgraphExecutor {
                 let record = get_repository_raw(&self.pool, path).await?;
                 match record {
                     Some(record) => {
-                        self.project_repository_node(&record, &field.selection_set, fragments)
+                        self.project_repository_node(&record, &field.selection_set, fragments, variables)
                             .await
                     }
                     None => Ok(JsonValue::Null),
@@ -337,7 +337,7 @@ impl CoreSubgraphExecutor {
                 let input_value = self.get_required_argument(field, "input", variables)?;
                 let input = self.parse_create_repository_input(&input_value)?;
                 let record = create_repository_raw(&self.pool, input).await?;
-                self.project_repository_node(&record, &field.selection_set, fragments)
+                self.project_repository_node(&record, &field.selection_set, fragments, variables)
                     .await
             }
             "linkRemoteRepository" => {
@@ -347,7 +347,7 @@ impl CoreSubgraphExecutor {
                     .ok_or_else(|| anyhow!("url argument must be a string"))?
                     .to_string();
                 let record = link_remote_repository_raw(&self.pool, &self.storage, url).await?;
-                self.project_repository_node(&record, &field.selection_set, fragments)
+                self.project_repository_node(&record, &field.selection_set, fragments, variables)
                     .await
             }
             other => Err(anyhow!("Unsupported mutation field `{}`", other)),
@@ -499,6 +499,7 @@ impl CoreSubgraphExecutor {
         record: &RepositoryRecord,
         selection_set: &'a SelectionSet<'a, String>,
         fragments: &FragmentMap<'a>,
+        variables: &Vars,
     ) -> Result<JsonValue> {
         let mut map = Map::new();
         let fields = selection_fields(selection_set, "RepositoryNode", fragments)?;
@@ -522,6 +523,17 @@ impl CoreSubgraphExecutor {
                         }
                     } else {
                         JsonValue::Null
+                    }
+                }
+                "readmeHtml" => {
+                    let branch = self
+                        .get_optional_argument(field, "branch", variables)?
+                        .and_then(|v| v.as_str().map(|s| s.to_string()));
+                    
+                    match get_repository_readme_html(&self.pool, &self.storage, record, branch).await {
+                        Ok(Some(html)) => JsonValue::String(html),
+                        Ok(None) => JsonValue::Null,
+                        Err(_) => JsonValue::Null,
                     }
                 }
                 _ => JsonValue::Null,

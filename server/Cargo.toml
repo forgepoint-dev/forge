@@ -38,6 +38,7 @@ ron = "0.8"
 oci-distribution = "0.11"
 sha2 = "0.10"
 bytes = "1"
+pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
 
 [dev-dependencies]
 tokio-test = "0.4"
