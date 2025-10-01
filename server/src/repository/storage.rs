@@ -3,7 +3,6 @@ use tokio::task;
 
 use super::cache::refresh_remote_repository_cache;
 use super::models::RepositoryRecord;
-use crate::graphql::errors::internal_error;
 
 #[derive(Clone)]
 pub struct RepositoryStorage {
@@ -19,7 +18,7 @@ impl RepositoryStorage {
         }
     }
 
-    pub fn ensure_local_repository(&self, segments: &[String]) -> async_graphql::Result<PathBuf> {
+    pub fn ensure_local_repository(&self, segments: &[String]) -> anyhow::Result<PathBuf> {
         let mut path = self.local_root.clone();
         for segment in segments {
             path.push(segment);
@@ -28,59 +27,57 @@ impl RepositoryStorage {
         if path.is_dir() {
             Ok(path)
         } else {
-            Err(internal_error(format!(
+            Err(anyhow::anyhow!(
                 "repository directory not found at {}",
                 path.display()
-            )))
+            ))
         }
     }
 
     pub async fn ensure_remote_repository(
         &self,
         record: &RepositoryRecord,
-    ) -> async_graphql::Result<PathBuf> {
+    ) -> anyhow::Result<PathBuf> {
         let remote_url = record
             .remote_url
             .clone()
-            .ok_or_else(|| internal_error("remote repository missing URL"))?;
+            .ok_or_else(|| anyhow::anyhow!("remote repository missing URL"))?;
         let cache_path = self.remote_cache_root.join(&record.id);
         let parent = cache_path.parent().map(Path::to_path_buf);
 
-        let result = task::spawn_blocking(move || -> async_graphql::Result<PathBuf> {
+        let result = task::spawn_blocking(move || -> anyhow::Result<PathBuf> {
             if let Some(parent) = &parent {
                 std::fs::create_dir_all(parent).map_err(|err| {
-                    internal_error(format!(
+                    anyhow::anyhow!(
                         "failed to create remote cache directory {}: {}",
                         parent.display(),
                         err
-                    ))
+                    )
                 })?;
             }
 
             if cache_path.exists() {
                 std::fs::remove_dir_all(&cache_path).map_err(|err| {
-                    internal_error(format!(
+                    anyhow::anyhow!(
                         "failed to reset remote cache at {}: {}",
                         cache_path.display(),
                         err
-                    ))
+                    )
                 })?;
             }
 
             let mut prepare =
                 gix::prepare_clone(remote_url.clone(), &cache_path).map_err(|err| {
-                    internal_error(format!(
+                    anyhow::anyhow!(
                         "failed to prepare clone for remote repository {}: {}",
-                        remote_url, err
-                    ))
+                        remote_url,
+                        err
+                    )
                 })?;
             let (repo, _) = prepare
                 .fetch_only(gix::progress::Discard, &gix::interrupt::IS_INTERRUPTED)
                 .map_err(|err| {
-                    internal_error(format!(
-                        "failed to clone remote repository {}: {}",
-                        remote_url, err
-                    ))
+                    anyhow::anyhow!("failed to clone remote repository {}: {}", remote_url, err)
                 })?;
 
             refresh_remote_repository_cache(&repo, &remote_url)?;
@@ -88,7 +85,7 @@ impl RepositoryStorage {
             Ok(cache_path)
         })
         .await
-        .map_err(internal_error)??;
+        .map_err(|err| anyhow::anyhow!(err))??;
 
         Ok(result)
     }

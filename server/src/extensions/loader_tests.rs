@@ -80,7 +80,11 @@ async fn test_module_size_limit_enforcement() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     let err_str = format!("{:#}", err); // Use alternate formatting to show full error chain
-    assert!(err_str.contains("WASM module too large"), "Error was: {}", err_str);
+    assert!(
+        err_str.contains("WASM module too large"),
+        "Error was: {}",
+        err_str
+    );
 }
 
 #[tokio::test]

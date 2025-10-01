@@ -7,6 +7,7 @@ pub mod extensions;
 pub mod graphql;
 pub mod group;
 pub mod repository;
+pub mod router;
 pub mod supervisor;
 pub mod validation;
 

@@ -3,9 +3,8 @@ use std::path::{Path, PathBuf};
 use tokio::task;
 
 use super::models::{RepositoryEntryKind, RepositoryEntryNode};
-use crate::graphql::errors::{bad_user_input, internal_error};
 
-pub fn normalize_tree_path(tree_path: Option<String>) -> async_graphql::Result<String> {
+pub fn normalize_tree_path(tree_path: Option<String>) -> anyhow::Result<String> {
     let Some(tree_path) = tree_path else {
         return Ok(String::new());
     };
@@ -17,11 +16,11 @@ pub fn normalize_tree_path(tree_path: Option<String>) -> async_graphql::Result<S
         }
 
         if segment == ".." {
-            return Err(bad_user_input("treePath cannot traverse upwards"));
+            return Err(anyhow::anyhow!("treePath cannot traverse upwards"));
         }
 
         if segment.contains('\0') {
-            return Err(bad_user_input("treePath contains an invalid character"));
+            return Err(anyhow::anyhow!("treePath contains an invalid character"));
         }
 
         segments.push(segment.to_string());
@@ -33,22 +32,22 @@ pub fn normalize_tree_path(tree_path: Option<String>) -> async_graphql::Result<S
 pub async fn read_repository_entries(
     repository_path: PathBuf,
     tree_path: String,
-) -> async_graphql::Result<Vec<RepositoryEntryNode>> {
+) -> anyhow::Result<Vec<RepositoryEntryNode>> {
     task::spawn_blocking(move || list_repository_entries(&repository_path, &tree_path))
         .await
-        .map_err(internal_error)?
+        .map_err(|err| anyhow::anyhow!(err))?
 }
 
 fn list_repository_entries(
     repository_path: &Path,
     tree_path: &str,
-) -> async_graphql::Result<Vec<RepositoryEntryNode>> {
+) -> anyhow::Result<Vec<RepositoryEntryNode>> {
     let repo = gix::open(repository_path).map_err(|err| {
-        internal_error(format!(
+        anyhow::anyhow!(
             "failed to open repository at {}: {}",
             repository_path.display(),
             err
-        ))
+        )
     })?;
 
     let mut head = match repo.head() {
@@ -58,45 +57,40 @@ fn list_repository_entries(
                 return Ok(Vec::new());
             }
 
-            return Err(bad_user_input(format!(
+            return Err(anyhow::anyhow!(
                 "path `{}` not found in repository",
                 tree_path
-            )));
+            ));
         }
     };
 
     let commit = head
         .peel_to_commit_in_place()
-        .map_err(internal_error)?;
-    let root_tree = commit.tree().map_err(internal_error)?;
+        .map_err(|err| anyhow::anyhow!(err))?;
+    let root_tree = commit.tree().map_err(|err| anyhow::anyhow!(err))?;
 
     let tree = if tree_path.is_empty() {
         root_tree
     } else {
         let entry = root_tree
             .lookup_entry_by_path(Path::new(tree_path))
-            .map_err(internal_error)?
-            .ok_or_else(|| {
-                bad_user_input(format!("path `{}` not found in repository", tree_path))
-            })?;
+            .map_err(|err| anyhow::anyhow!(err))?
+            .ok_or_else(|| anyhow::anyhow!("path `{}` not found in repository", tree_path))?;
 
         if !entry.mode().is_tree() {
-            return Err(bad_user_input(format!(
-                "path `{}` is not a directory",
-                tree_path
-            )));
+            return Err(anyhow::anyhow!("path `{}` is not a directory", tree_path));
         }
 
         entry
             .object()
-            .map_err(internal_error)?
+            .map_err(|err| anyhow::anyhow!(err))?
             .into_tree()
     };
 
     let mut entries = Vec::new();
 
     for entry in tree.iter() {
-        let entry = entry.map_err(internal_error)?;
+        let entry = entry.map_err(|err| anyhow::anyhow!(err))?;
         let name = entry.filename().to_string();
 
         let full_path = if tree_path.is_empty() {
@@ -117,7 +111,7 @@ fn list_repository_entries(
             | gix::object::tree::EntryKind::Link => {
                 let blob = repo
                     .find_object(entry.oid())
-                    .map_err(internal_error)?
+                    .map_err(|err| anyhow::anyhow!(err))?
                     .into_blob();
                 entries.push(RepositoryEntryNode {
                     name,

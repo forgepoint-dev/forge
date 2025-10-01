@@ -1,0 +1,118 @@
+name: Build Integrations
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/integrations/**'
+      - '.github/workflows/build-integrations.yml'
+  pull_request:
+    paths:
+      - 'packages/integrations/**'
+      - '.github/workflows/build-integrations.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        integration:
+          - issues
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.1.30
+
+      - name: Install dependencies
+        working-directory: packages/integrations/${{ matrix.integration }}
+        run: bun install
+
+      - name: Run tests
+        working-directory: packages/integrations/${{ matrix.integration }}
+        run: bun run test
+
+      - name: Build package
+        working-directory: packages/integrations/${{ matrix.integration }}
+        run: bun run build
+        continue-on-error: true
+
+      - name: Check types
+        working-directory: packages/integrations/${{ matrix.integration }}
+        run: bunx tsc --noEmit
+        continue-on-error: true
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.integration }}-integration
+          path: packages/integrations/${{ matrix.integration }}/dist/
+          retention-days: 7
+        continue-on-error: true
+
+  publish-npm:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'release:')
+    strategy:
+      matrix:
+        integration:
+          - issues
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.1.30
+
+      - name: Install dependencies
+        working-directory: packages/integrations/${{ matrix.integration }}
+        run: bun install
+
+      - name: Extract version
+        id: version
+        working-directory: packages/integrations/${{ matrix.integration }}
+        run: |
+          VERSION=$(jq -r '.version' package.json)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Configure npm
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
+        if: secrets.NPM_TOKEN != ''
+
+      - name: Publish to npm
+        working-directory: packages/integrations/${{ matrix.integration }}
+        run: |
+          npm publish --access public
+        if: secrets.NPM_TOKEN != ''
+        continue-on-error: true
+
+      - name: Generate build summary
+        run: |
+          echo "### 📦 Published Integration" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Integration:** ${{ matrix.integration }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Package:** @forgepoint/astro-integration-${{ matrix.integration }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Installation" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo 'bun add @forgepoint/astro-integration-${{ matrix.integration }}' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Usage" >> $GITHUB_STEP_SUMMARY
+          echo '```javascript' >> $GITHUB_STEP_SUMMARY
+          echo "import ${{ matrix.integration }}Integration from '@forgepoint/astro-integration-${{ matrix.integration }}';" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "export default defineConfig({" >> $GITHUB_STEP_SUMMARY
+          echo "  integrations: [${{ matrix.integration }}Integration()]," >> $GITHUB_STEP_SUMMARY
+          echo "});" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

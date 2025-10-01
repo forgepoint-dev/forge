@@ -1,6 +1,6 @@
-use async_graphql::{Enum, ID, Object};
+use serde::Serialize;
 
-#[derive(Clone, Debug, sqlx::FromRow)]
+#[derive(Clone, Debug, sqlx::FromRow, Serialize)]
 pub struct RepositoryRecord {
     pub id: String,
     pub slug: String,
@@ -8,10 +8,7 @@ pub struct RepositoryRecord {
     pub remote_url: Option<String>,
 }
 
-#[derive(Clone)]
-pub struct RepositoryNode(pub RepositoryRecord);
-
-#[derive(Clone)]
+#[derive(Clone, Debug, Serialize)]
 pub struct RepositorySummary {
     pub id: String,
     pub slug: String,
@@ -25,7 +22,7 @@ pub struct RepositorySummaryRow {
     pub remote_url: Option<String>,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Serialize)]
 pub struct RepositoryEntryNode {
     pub name: String,
     pub path: String,
@@ -33,75 +30,16 @@ pub struct RepositoryEntryNode {
     pub size: Option<i64>,
 }
 
-#[derive(Enum, Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq, Serialize)]
 pub enum RepositoryEntryKind {
-    #[graphql(name = "FILE")]
     File,
-    #[graphql(name = "DIRECTORY")]
     Directory,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 pub struct RepositoryEntriesPayload {
     pub tree_path: String,
     pub entries: Vec<RepositoryEntryNode>,
-}
-
-#[Object]
-impl RepositoryEntriesPayload {
-    async fn tree_path(&self) -> &str {
-        &self.tree_path
-    }
-
-    async fn entries(&self) -> &[RepositoryEntryNode] {
-        &self.entries
-    }
-}
-
-#[Object]
-impl RepositoryEntryNode {
-    async fn name(&self) -> &str {
-        &self.name
-    }
-
-    async fn path(&self) -> &str {
-        &self.path
-    }
-
-    async fn kind(&self) -> RepositoryEntryKind {
-        self.kind
-    }
-
-    async fn size(&self) -> Option<i64> {
-        self.size
-    }
-}
-
-#[Object]
-impl RepositorySummary {
-    async fn id(&self) -> ID {
-        ID::from(self.id.clone())
-    }
-
-    async fn slug(&self) -> &str {
-        &self.slug
-    }
-
-    #[graphql(name = "isRemote")]
-    async fn is_remote(&self) -> bool {
-        self.remote_url.is_some()
-    }
-
-    #[graphql(name = "remoteUrl")]
-    async fn remote_url(&self) -> Option<&str> {
-        self.remote_url.as_deref()
-    }
-}
-
-impl From<RepositoryRecord> for RepositoryNode {
-    fn from(record: RepositoryRecord) -> Self {
-        RepositoryNode(record)
-    }
 }
 
 impl From<RepositorySummaryRow> for RepositorySummary {

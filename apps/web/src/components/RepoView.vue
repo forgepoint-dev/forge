@@ -57,6 +57,7 @@ const remoteUrl = computed(() => repository.value?.remoteUrl ?? null)
 const repositoryContext = computed<RepositoryContext | null>(() => {
   if (!repository.value) return null
   return {
+    version: 1,
     id: repository.value.id,
     slug: repository.value.slug,
     fullPath: props.fullPath,

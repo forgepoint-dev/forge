@@ -194,10 +194,8 @@ impl ExtensionManager {
                     }
                     Err(e) => {
                         tracing::error!("Failed to fetch OCI extension {}: {}", oci_ext.name, e);
-                        return Err(e).context(format!(
-                            "Failed to fetch OCI extension: {}",
-                            oci_ext.name
-                        ));
+                        return Err(e)
+                            .context(format!("Failed to fetch OCI extension: {}", oci_ext.name));
                     }
                 }
             }
@@ -343,14 +341,10 @@ impl ExtensionManager {
 
         // Load the WASM extension using the new runtime
         let limits = loader::ExtensionLimits::default();
-        let extension = wasm_runtime::Extension::load(
-            wasm_path,
-            &extension_dir,
-            name.to_string(),
-            &limits,
-        )
-        .await
-        .with_context(|| format!("Failed to load WASM extension: {}", name))?;
+        let extension =
+            wasm_runtime::Extension::load(wasm_path, &extension_dir, name.to_string(), &limits)
+                .await
+                .with_context(|| format!("Failed to load WASM extension: {}", name))?;
 
         // Get the schema from the extension
         let schema_sdl = extension.schema().to_string();
@@ -358,10 +352,14 @@ impl ExtensionManager {
         // Parse the schema SDL into a SchemaFragment
         let schema = schema::SchemaFragment {
             federation_sdl: Some(schema_sdl.clone()),
-            types: vec![]
+            types: vec![],
         };
 
-        tracing::info!("Successfully loaded extension: {} with schema ({} bytes)", name, schema_sdl.len());
+        tracing::info!(
+            "Successfully loaded extension: {} with schema ({} bytes)",
+            name,
+            schema_sdl.len()
+        );
 
         Ok(Extension {
             name: name.to_string(),
@@ -369,7 +367,6 @@ impl ExtensionManager {
             runtime: Arc::new(extension),
         })
     }
-
 
     /// Get all loaded extensions
     pub fn get_extensions(&self) -> &HashMap<String, Extension> {

@@ -79,15 +79,3 @@ pub async fn remote_url_exists(pool: &SqlitePool, remote_url: &str) -> Result<bo
 
     Ok(exists.is_some())
 }
-
-pub async fn fetch_group_by_id(
-    pool: &SqlitePool,
-    id: &str,
-) -> Result<Option<crate::group::models::GroupRecord>, sqlx::Error> {
-    sqlx::query_as::<_, crate::group::models::GroupRecord>(
-        "SELECT id, slug, parent FROM groups WHERE id = ?",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await
-}

@@ -6,8 +6,4 @@ pub mod mutations;
 pub mod queries;
 pub mod storage;
 
-pub use models::{
-    RepositoryEntriesPayload, RepositoryNode,
-};
-pub use mutations::CreateRepositoryInput;
 pub use storage::RepositoryStorage;

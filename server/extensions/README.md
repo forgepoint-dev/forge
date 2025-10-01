@@ -1,4 +1,13 @@
-# Extensions Directory
+# Extensions Directory (DEPRECATED)
+
+**⚠️ DEPRECATION NOTICE:** This directory is deprecated as of 2025-09-30. New extensions should be created in `packages/extensions/` following the Extension Package Architecture (PRD-0002).
+
+**For new extension development, see:**
+- [docs/guides/creating-extensions.md](../../docs/guides/creating-extensions.md)
+- [docs/prds/0002-extension-packages.md](../../docs/prds/0002-extension-packages.md)
+- [packages/extensions/issues/](../../packages/extensions/issues/) - Reference implementation
+
+---
 
 This directory contains WebAssembly (WASM) extension modules for the Forge GraphQL server.
 
@@ -59,9 +68,22 @@ interface extension {
 6. GraphQL schema fragment is retrieved and combined with the core schema registry
 7. Field resolutions are routed to appropriate extensions
 
-## Development
+## Migration Path
 
-To create an extension:
+**Existing extensions in this directory will continue to work** but should be migrated to the new structure:
+
+1. Move extension source to `packages/extensions/<extension-name>/`
+2. Update build configuration to use `justfile` pattern
+3. Create corresponding Astro integration in `packages/integrations/<extension-name>/`
+4. Configure OCI distribution (optional but recommended)
+
+See [docs/guides/creating-extensions.md](../../docs/guides/creating-extensions.md) for complete migration guide.
+
+## Development (Legacy)
+
+⚠️ **For new extensions, use `packages/extensions/` instead.**
+
+To create a legacy extension:
 
 1. Write extension code in any WASM-compatible language (Rust, AssemblyScript, etc.)
 2. Implement the extension interface

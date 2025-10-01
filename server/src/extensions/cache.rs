@@ -97,17 +97,16 @@ impl ExtensionCache {
             format!("Failed to read cache metadata: {}", metadata_path.display())
         })?;
 
-        serde_json::from_str(&content)
-            .with_context(|| format!("Failed to parse cache metadata: {}", metadata_path.display()))
+        serde_json::from_str(&content).with_context(|| {
+            format!(
+                "Failed to parse cache metadata: {}",
+                metadata_path.display()
+            )
+        })
     }
 
     /// Store extension in cache with metadata
-    pub fn store(
-        &self,
-        cache_key: &str,
-        wasm_data: &[u8],
-        metadata: CacheMetadata,
-    ) -> Result<()> {
+    pub fn store(&self, cache_key: &str, wasm_data: &[u8], metadata: CacheMetadata) -> Result<()> {
         // Write WASM file
         let wasm_path = self.wasm_path(cache_key);
         std::fs::write(&wasm_path, wasm_data)
@@ -115,16 +114,16 @@ impl ExtensionCache {
 
         // Write metadata
         let metadata_path = self.metadata_path(cache_key);
-        let metadata_json = serde_json::to_string_pretty(&metadata).context("Failed to serialize metadata")?;
+        let metadata_json =
+            serde_json::to_string_pretty(&metadata).context("Failed to serialize metadata")?;
         std::fs::write(&metadata_path, metadata_json).with_context(|| {
-            format!("Failed to write cache metadata: {}", metadata_path.display())
+            format!(
+                "Failed to write cache metadata: {}",
+                metadata_path.display()
+            )
         })?;
 
-        tracing::debug!(
-            "Cached extension {} ({} bytes)",
-            cache_key,
-            wasm_data.len()
-        );
+        tracing::debug!("Cached extension {} ({} bytes)", cache_key, wasm_data.len());
 
         Ok(())
     }

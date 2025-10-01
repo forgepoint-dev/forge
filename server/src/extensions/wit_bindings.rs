@@ -33,8 +33,7 @@ pub use self::Extension as WasmExtension;
 
 // Import types from generated guest interface modules
 use self::exports::forge::extension::extension_api::{
-    Config as ExtConfig, ResolveInfo as ExtResolveInfo,
-    ResolveResult as ExtResolveResult,
+    Config as ExtConfig, ResolveInfo as ExtResolveInfo, ResolveResult as ExtResolveResult,
 };
 
 // For imports (host-*), we implement the Host traits
@@ -105,7 +104,9 @@ impl ExtensionHost {
 
     /// Get database pool
     fn get_pool(&self) -> Result<SqlitePool> {
-        let pool_guard = self.db_pool.lock()
+        let pool_guard = self
+            .db_pool
+            .lock()
             .map_err(|e| anyhow::anyhow!("Failed to lock database pool: {}", e))?;
         pool_guard
             .as_ref()
@@ -186,11 +187,9 @@ fn wit_value_to_json(value: &WitRecordValue) -> serde_json::Value {
         WitRecordValue::Null => serde_json::Value::Null,
         WitRecordValue::Boolean(b) => serde_json::Value::Bool(*b),
         WitRecordValue::Integer(i) => serde_json::json!(i),
-        WitRecordValue::Float(f) => {
-            serde_json::Number::from_f64(*f)
-                .map(serde_json::Value::Number)
-                .unwrap_or(serde_json::Value::Null)
-        }
+        WitRecordValue::Float(f) => serde_json::Number::from_f64(*f)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
         WitRecordValue::Text(s) => serde_json::Value::String(s.clone()),
         WitRecordValue::Blob(b) => {
             // Convert blob to base64 string
@@ -204,11 +203,7 @@ fn wit_value_to_json(value: &WitRecordValue) -> serde_json::Value {
 
 // Implement the host-database interface
 impl self::forge::extension::host_database::Host for ExtensionState {
-    fn query(
-        &mut self,
-        sql: String,
-        params: Vec<WitRecordValue>,
-    ) -> QueryResult {
+    fn query(&mut self, sql: String, params: Vec<WitRecordValue>) -> QueryResult {
         // NOTE: We use block_on here because WASM bindings are synchronous (async: false)
         // This is a known trade-off: sync WASM bindings avoid Send/Sync issues with WASI types,
         // but require blocking on async database operations.
@@ -253,20 +248,17 @@ impl self::forge::extension::host_database::Host for ExtensionState {
             let mut row_values = Vec::new();
             for (i, _column) in row.columns().iter().enumerate() {
                 let value: WitRecordValue = if let Ok(v) = row.try_get::<Option<String>, _>(i) {
-                    v.map(WitRecordValue::Text)
-                        .unwrap_or(WitRecordValue::Null)
+                    v.map(WitRecordValue::Text).unwrap_or(WitRecordValue::Null)
                 } else if let Ok(v) = row.try_get::<Option<i64>, _>(i) {
                     v.map(WitRecordValue::Integer)
                         .unwrap_or(WitRecordValue::Null)
                 } else if let Ok(v) = row.try_get::<Option<f64>, _>(i) {
-                    v.map(WitRecordValue::Float)
-                        .unwrap_or(WitRecordValue::Null)
+                    v.map(WitRecordValue::Float).unwrap_or(WitRecordValue::Null)
                 } else if let Ok(v) = row.try_get::<Option<bool>, _>(i) {
                     v.map(WitRecordValue::Boolean)
                         .unwrap_or(WitRecordValue::Null)
                 } else if let Ok(v) = row.try_get::<Option<Vec<u8>>, _>(i) {
-                    v.map(WitRecordValue::Blob)
-                        .unwrap_or(WitRecordValue::Null)
+                    v.map(WitRecordValue::Blob).unwrap_or(WitRecordValue::Null)
                 } else {
                     WitRecordValue::Null
                 };
@@ -278,11 +270,7 @@ impl self::forge::extension::host_database::Host for ExtensionState {
         QueryResult::Success(result_rows)
     }
 
-    fn execute(
-        &mut self,
-        sql: String,
-        params: Vec<WitRecordValue>,
-    ) -> ExecResult {
+    fn execute(&mut self, sql: String, params: Vec<WitRecordValue>) -> ExecResult {
         let pool = match self.host.get_pool() {
             Ok(p) => p,
             Err(e) => return ExecResult::Error(e.to_string()),
@@ -367,14 +355,15 @@ impl ComponentExtension {
         let engine = Engine::new(&config)?;
 
         // Create WASI context - minimal configuration
-        let wasi = WasiCtxBuilder::new()
-            .build();
+        let wasi = WasiCtxBuilder::new().build();
 
         // Create host with pre-initialized database pool
         let host = ExtensionHost::new(name, extension_dir.to_path_buf());
         // Store the pool
         {
-            let mut pool_guard = host.db_pool.lock()
+            let mut pool_guard = host
+                .db_pool
+                .lock()
                 .map_err(|e| anyhow::anyhow!("Failed to lock database pool: {}", e))?;
             *pool_guard = Some(db_pool);
         }

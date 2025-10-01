@@ -1,6 +1,6 @@
 //! Integration test for WASM extensions
 
-use server::extensions::{wasm_runtime, loader::ExtensionLimits};
+use server::extensions::{loader::ExtensionLimits, wasm_runtime};
 use server::test_helpers;
 use std::path::Path;
 use tempfile::TempDir;
@@ -20,7 +20,9 @@ async fn test_load_example_extension() {
     let extension_dir = temp_dir.path();
 
     // Create in-memory database pool for testing
-    let pool = test_helpers::create_test_pool_no_migrations().await.unwrap();
+    let pool = test_helpers::create_test_pool_no_migrations()
+        .await
+        .unwrap();
 
     // Load the extension with in-memory database
     let limits = ExtensionLimits::default();
@@ -80,7 +82,9 @@ async fn test_extension_field_resolution_with_arguments() {
     let extension_dir = temp_dir.path();
 
     // Create in-memory database pool for testing
-    let pool = test_helpers::create_test_pool_no_migrations().await.unwrap();
+    let pool = test_helpers::create_test_pool_no_migrations()
+        .await
+        .unwrap();
 
     let limits = ExtensionLimits::default();
     let extension = wasm_runtime::Extension::load_with_pool(
@@ -126,7 +130,9 @@ async fn test_extension_error_handling() {
     let extension_dir = temp_dir.path();
 
     // Create in-memory database pool for testing
-    let pool = test_helpers::create_test_pool_no_migrations().await.unwrap();
+    let pool = test_helpers::create_test_pool_no_migrations()
+        .await
+        .unwrap();
 
     let limits = ExtensionLimits::default();
     let extension = wasm_runtime::Extension::load_with_pool(

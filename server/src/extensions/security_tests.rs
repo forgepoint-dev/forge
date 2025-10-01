@@ -248,7 +248,10 @@ fn test_limits_prevent_dos() {
     let limits = ExtensionLimits::default();
 
     // Ensure fuel is limited (prevents infinite loops)
-    assert!(limits.max_fuel.is_some(), "Fuel should be limited by default");
+    assert!(
+        limits.max_fuel.is_some(),
+        "Fuel should be limited by default"
+    );
 
     // Ensure operations timeout (prevents hanging)
     assert!(

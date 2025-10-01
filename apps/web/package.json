@@ -7,7 +7,11 @@
 		"dev": "astro dev",
 		"build": "astro build",
 		"preview": "astro preview",
-		"astro": "astro"
+		"astro": "astro",
+		"test": "vitest",
+		"test:ui": "vitest --ui",
+		"test:e2e": "playwright test",
+		"test:e2e:ui": "playwright test --ui"
 	},
 	"dependencies": {
 		"astro": "^5.14.1",
@@ -18,5 +22,10 @@
 		"autoprefixer": "^10.4.20",
 		"postcss": "^8.4.47",
 		"design": "workspace:*"
+	},
+	"devDependencies": {
+		"vitest": "^2.0.0",
+		"@vitest/ui": "^2.0.0",
+		"@playwright/test": "^1.47.0"
 	}
 }

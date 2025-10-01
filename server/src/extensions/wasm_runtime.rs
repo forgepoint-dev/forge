@@ -8,7 +8,9 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use super::loader::ExtensionLimits;
-use super::wit_bindings::{ComponentExtension, ExtensionConfig, ExtensionInfo, ResolveInfo, ResolveResult};
+use super::wit_bindings::{
+    ComponentExtension, ExtensionConfig, ExtensionInfo, ResolveInfo, ResolveResult,
+};
 
 /// High-level extension wrapper with runtime management
 /// Uses Mutex to ensure Store<ExtensionState> is Send+Sync safe
@@ -30,11 +32,11 @@ impl Extension {
         _limits: &ExtensionLimits,
     ) -> Result<Self> {
         // Ensure extension directory exists
-        std::fs::create_dir_all(extension_dir)
-            .context("Failed to create extension directory")?;
+        std::fs::create_dir_all(extension_dir).context("Failed to create extension directory")?;
 
         // Canonicalize to get absolute path
-        let extension_dir_abs = extension_dir.canonicalize()
+        let extension_dir_abs = extension_dir
+            .canonicalize()
             .context("Failed to canonicalize extension directory")?;
 
         // Create database path (absolute)
@@ -45,9 +47,10 @@ impl Extension {
         use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
         use std::str::FromStr;
 
-        let connect_options = SqliteConnectOptions::from_str(&format!("sqlite://{}", db_path.display()))?
-            .create_if_missing(true)
-            .foreign_keys(true);
+        let connect_options =
+            SqliteConnectOptions::from_str(&format!("sqlite://{}", db_path.display()))?
+                .create_if_missing(true)
+                .foreign_keys(true);
 
         let pool = SqlitePoolOptions::new()
             .max_connections(5)
@@ -112,6 +115,7 @@ impl Extension {
     }
 
     /// Load an extension with a pre-configured database pool (for testing)
+    #[cfg_attr(not(test), allow(dead_code))]
     pub async fn load_with_pool(
         wasm_path: &Path,
         extension_dir: &Path,
@@ -169,7 +173,8 @@ impl Extension {
         // Call the component in a blocking task (Mutex ensures thread safety)
         let component = self.component.clone();
         let result = tokio::task::spawn_blocking(move || {
-            let mut comp = component.lock()
+            let mut comp = component
+                .lock()
                 .map_err(|e| anyhow::anyhow!("Failed to lock component: {}", e))?;
             comp.resolve_field(resolve_info)
                 .context("Failed to resolve field in extension")
@@ -186,7 +191,9 @@ impl Extension {
     /// Shutdown the extension
     #[allow(dead_code)]
     pub fn shutdown(&self) -> Result<()> {
-        let mut component = self.component.lock()
+        let mut component = self
+            .component
+            .lock()
             .map_err(|e| anyhow::anyhow!("Failed to lock component: {}", e))?;
         component.shutdown()
     }

@@ -21,6 +21,7 @@ export interface HomepageWidgetSlot {
 }
 
 export interface RepositoryContext {
+	version: 1;
 	id: string;
 	slug: string;
 	fullPath: string;
@@ -29,6 +30,7 @@ export interface RepositoryContext {
 }
 
 export interface GroupContext {
+	version: 1;
 	id: string;
 	slug: string;
 	fullPath: string;

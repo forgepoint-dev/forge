@@ -5,11 +5,44 @@ export interface GraphQLResponse<T> {
 	errors?: Array<{ message: string }>;
 }
 
+export class GraphQLError extends Error {
+	constructor(
+		message: string,
+		public errors: Array<{ message: string }>,
+	) {
+		super(message);
+		this.name = 'GraphQLError';
+	}
+}
+
+export class NetworkError extends Error {
+	constructor(
+		message: string,
+		public statusCode?: number,
+	) {
+		super(message);
+		this.name = 'NetworkError';
+	}
+}
+
 export const client = async <TData, TVariables extends Record<string, unknown> | undefined = undefined>(
 	query: string,
 	variables?: TVariables
 ): Promise<TData> => {
-	return graphqlRequest<TData, TVariables>({ query, variables });
+	try {
+		return await graphqlRequest<TData, TVariables>({ query, variables });
+	} catch (err) {
+		if (err instanceof Error) {
+			if (err.message.includes('fetch') || err.message.includes('network')) {
+				throw new NetworkError(`Network error: ${err.message}`);
+			}
+			if (err.message.includes('GraphQL')) {
+				throw new GraphQLError('GraphQL request failed', [{ message: err.message }]);
+			}
+			throw new Error(`Request failed: ${err.message}`);
+		}
+		throw new Error('Request failed: Unknown error');
+	}
 };
 
 export const getAllIssues = async () => {

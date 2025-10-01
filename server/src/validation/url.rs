@@ -1,13 +1,12 @@
-use crate::graphql::errors::bad_user_input;
 use url::Url;
 
-pub fn normalize_remote_repository(raw_url: &str) -> async_graphql::Result<(String, String)> {
+pub fn normalize_remote_repository(raw_url: &str) -> anyhow::Result<(String, String)> {
     let mut url =
-        Url::parse(raw_url).map_err(|_| bad_user_input("invalid remote repository URL"))?;
+        Url::parse(raw_url).map_err(|_| anyhow::anyhow!("invalid remote repository URL"))?;
 
     match url.scheme() {
         "http" | "https" => {}
-        _ => return Err(bad_user_input("only http(s) remote URLs are supported")),
+        _ => return Err(anyhow::anyhow!("only http(s) remote URLs are supported")),
     }
 
     url.set_fragment(None);
@@ -23,15 +22,15 @@ pub fn normalize_remote_repository(raw_url: &str) -> async_graphql::Result<(Stri
     Ok((normalized, slug))
 }
 
-fn slug_from_remote_url(url: &Url) -> async_graphql::Result<String> {
+fn slug_from_remote_url(url: &Url) -> anyhow::Result<String> {
     let segments: Vec<_> = url
         .path_segments()
-        .ok_or_else(|| bad_user_input("remote URL is missing path segments"))?
+        .ok_or_else(|| anyhow::anyhow!("remote URL is missing path segments"))?
         .filter(|segment| !segment.is_empty())
         .collect();
 
     let Some(last_segment) = segments.last() else {
-        return Err(bad_user_input("remote URL must include a repository name"));
+        return Err(anyhow::anyhow!("remote URL must include a repository name"));
     };
 
     let candidate = last_segment.trim_end_matches(".git").to_ascii_lowercase();
@@ -57,7 +56,7 @@ fn slug_from_remote_url(url: &Url) -> async_graphql::Result<String> {
     let slug = slug.trim_matches('-').to_string();
 
     if slug.is_empty() {
-        return Err(bad_user_input(
+        return Err(anyhow::anyhow!(
             "repository name in URL cannot be converted to a valid slug",
         ));
     }

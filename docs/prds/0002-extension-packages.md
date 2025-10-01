@@ -1,7 +1,8 @@
 # PRD-0002: Extension Package Architecture
 
-- Status: Draft
+- Status: Accepted
 - Date: 2025-09-30
+- Last Updated: 2025-09-30
 - Authors: Forgepoint Dev Team
 
 ## Problem Statement

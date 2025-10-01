@@ -49,7 +49,7 @@ pub async fn init_in_memory_pool() -> Result<(SqlitePool, PathBuf)> {
         .foreign_keys(true);
 
     let pool = SqlitePoolOptions::new()
-        .max_connections(1)  // In-memory databases should use a single connection
+        .max_connections(1) // In-memory databases should use a single connection
         .connect_with(connect_options)
         .await?;
 

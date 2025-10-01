@@ -45,6 +45,22 @@ export function createSlotPlugin(registry: SlotRegistry): Plugin & { __registry:
 		load(id) {
 			if (id === resolvedModuleIds.repoTabs) {
 				const sorted = [...registry.repoTabs].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+				// Validate slot registrations
+				const seenIds = new Set<string>();
+				const duplicates = sorted.filter(slot => {
+					if (seenIds.has(slot.id)) return true;
+					seenIds.add(slot.id);
+					return false;
+				});
+
+				if (duplicates.length > 0) {
+					console.warn(
+						'[Forge Slots] Duplicate slot IDs detected in repo-tabs:',
+						duplicates.map(s => s.id).join(', ')
+					);
+				}
+
 				const imports = sorted.map((slot, idx) => `import Component${idx} from '${slot.componentPath}';`).join('\n');
 				const slots = sorted
 					.map(
@@ -60,6 +76,22 @@ export function createSlotPlugin(registry: SlotRegistry): Plugin & { __registry:
 			}
 			if (id === resolvedModuleIds.groupTabs) {
 				const sorted = [...registry.groupTabs].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+				// Validate slot registrations
+				const seenIds = new Set<string>();
+				const duplicates = sorted.filter(slot => {
+					if (seenIds.has(slot.id)) return true;
+					seenIds.add(slot.id);
+					return false;
+				});
+
+				if (duplicates.length > 0) {
+					console.warn(
+						'[Forge Slots] Duplicate slot IDs detected in group-tabs:',
+						duplicates.map(s => s.id).join(', ')
+					);
+				}
+
 				const imports = sorted.map((slot, idx) => `import Component${idx} from '${slot.componentPath}';`).join('\n');
 				const slots = sorted
 					.map(
@@ -75,6 +107,22 @@ export function createSlotPlugin(registry: SlotRegistry): Plugin & { __registry:
 			}
 			if (id === resolvedModuleIds.homepageWidgets) {
 				const sorted = [...registry.homepageWidgets].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+				// Validate slot registrations
+				const seenIds = new Set<string>();
+				const duplicates = sorted.filter(slot => {
+					if (seenIds.has(slot.id)) return true;
+					seenIds.add(slot.id);
+					return false;
+				});
+
+				if (duplicates.length > 0) {
+					console.warn(
+						'[Forge Slots] Duplicate slot IDs detected in homepage-widgets:',
+						duplicates.map(s => s.id).join(', ')
+					);
+				}
+
 				const imports = sorted.map((slot, idx) => `import Component${idx} from '${slot.componentPath}';`).join('\n');
 				const slots = sorted
 					.map(

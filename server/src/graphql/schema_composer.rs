@@ -88,9 +88,24 @@ type Mutation @join__type(graph: CORE) {
 type GroupNode @join__type(graph: CORE) {
   id: ID! @join__field(graph: CORE)
   slug: String! @join__field(graph: CORE)
+  parent: GroupSummary @join__field(graph: CORE)
+  repositories: [RepositorySummary!]! @join__field(graph: CORE)
+}
+
+type GroupSummary @join__type(graph: CORE) {
+  id: ID! @join__field(graph: CORE)
+  slug: String! @join__field(graph: CORE)
 }
 
 type RepositoryNode @join__type(graph: CORE) {
+  id: ID! @join__field(graph: CORE)
+  slug: String! @join__field(graph: CORE)
+  group: GroupSummary @join__field(graph: CORE)
+  isRemote: Boolean! @join__field(graph: CORE)
+  remoteUrl: String @join__field(graph: CORE)
+}
+
+type RepositorySummary @join__type(graph: CORE) {
   id: ID! @join__field(graph: CORE)
   slug: String! @join__field(graph: CORE)
   isRemote: Boolean! @join__field(graph: CORE)
@@ -106,6 +121,7 @@ type RepositoryEntry @join__type(graph: CORE) {
   name: String! @join__field(graph: CORE)
   path: String! @join__field(graph: CORE)
   type: EntryType! @join__field(graph: CORE)
+  size: Int @join__field(graph: CORE)
 }
 
 enum EntryType @join__type(graph: CORE) {
@@ -141,52 +157,104 @@ enum join__Graph {
     pub fn compose(&self) -> Result<String> {
         let mut supergraph = self.core_schema.clone();
 
-        // Add subgraph entries to join__Graph enum
-        let mut graph_enum_additions = Vec::new();
-
-        for name in self.subgraphs.keys() {
-            graph_enum_additions.push(format!(
-                "  {} @join__graph(name: \"{}\", url: \"internal://{}\")",
-                name.to_uppercase(),
-                name,
-                name
-            ));
-        }
-
-        if !graph_enum_additions.is_empty() {
-            // Insert additional graphs into the enum
-            supergraph = supergraph.replace(
-                "enum join__Graph {\n  CORE @join__graph(name: \"core\", url: \"internal://core\")\n}",
-                &format!(
-                    "enum join__Graph {{\n  CORE @join__graph(name: \"core\", url: \"internal://core\")\n{}\n}}",
-                    graph_enum_additions.join("\n")
-                )
-            );
-        }
+        // Collect extension fields to merge into Query/Mutation
+        let mut query_extensions = Vec::new();
+        let mut mutation_extensions = Vec::new();
+        let mut types_to_add = Vec::new();
+        let mut graph_entries: Vec<(String, String)> = Vec::new();
 
         // Add extension types and fields
         for (name, schema) in &self.subgraphs {
             tracing::debug!("Processing extension '{}' with schema:\n{}", name, schema);
-            let processed_schema = self.process_extension_schema(name, schema)?;
-            tracing::debug!("Processed schema for '{}' :\n{}", name, processed_schema);
+            let (types, query_fields, mutation_fields, graph_name) =
+                self.process_extension_schema(name, schema)?;
+            tracing::debug!("Processed schema for '{}'", name);
+
+            types_to_add.push(types);
+            query_extensions.extend(query_fields);
+            mutation_extensions.extend(mutation_fields);
+            graph_entries.push((graph_name, name.clone()));
+        }
+
+        // Merge query extensions into the Query type
+        if !query_extensions.is_empty() {
+            let query_additions = query_extensions.join("\n  ");
+            supergraph = supergraph.replace(
+                "type Query @join__type(graph: CORE) {\n  # Core fields",
+                &format!("type Query @join__type(graph: CORE) {{\n  # Core fields"),
+            );
+            supergraph = supergraph.replace(
+                "  browseRepository(path: String!, treePath: String): RepositoryEntriesPayload @join__field(graph: CORE)\n}",
+                &format!("  browseRepository(path: String!, treePath: String): RepositoryEntriesPayload @join__field(graph: CORE)\n  # Extension fields\n  {}\n}}", query_additions)
+            );
+        }
+
+        // Merge mutation extensions into the Mutation type
+        if !mutation_extensions.is_empty() {
+            let mutation_additions = mutation_extensions.join("\n  ");
+            supergraph = supergraph.replace(
+                "type Mutation @join__type(graph: CORE) {\n  # Core mutations",
+                &format!("type Mutation @join__type(graph: CORE) {{\n  # Core mutations"),
+            );
+            supergraph = supergraph.replace(
+                "  linkRemoteRepository(url: String!): RepositoryNode! @join__field(graph: CORE)\n}",
+                &format!("  linkRemoteRepository(url: String!): RepositoryNode! @join__field(graph: CORE)\n  # Extension mutations\n  {}\n}}", mutation_additions)
+            );
+        }
+
+        // Add extension types
+        for types in types_to_add {
             supergraph.push_str("\n\n");
-            supergraph.push_str(&processed_schema);
+            supergraph.push_str(&types);
+        }
+
+        if !graph_entries.is_empty() {
+            let mut join_lines = Vec::with_capacity(graph_entries.len() + 1);
+            join_lines
+                .push("  CORE @join__graph(name: \"core\", url: \"internal://core\")".to_string());
+            for (graph_name, subgraph_name) in &graph_entries {
+                join_lines.push(format!(
+                    "  {graph} @join__graph(name: \"{name}\", url: \"extension://{name}\")",
+                    graph = graph_name,
+                    name = subgraph_name
+                ));
+            }
+
+            let join_block = format!("enum join__Graph {{\n{}\n}}\n", join_lines.join("\n"));
+
+            supergraph = supergraph.replace(
+                "enum join__Graph {\n  CORE @join__graph(name: \"core\", url: \"internal://core\")\n}\n",
+                &join_block,
+            );
         }
 
         tracing::debug!("Final supergraph SDL:\n{}", supergraph);
+
+        // Temporary: write to file for debugging
+        std::fs::write("/tmp/supergraph.graphql", &supergraph).ok();
+
         Ok(supergraph)
     }
 
-    fn process_extension_schema(&self, subgraph_name: &str, schema: &str) -> Result<String> {
-        // This is a simplified processing - in reality we'd parse the SDL properly
-        // For now, we'll do basic string processing to add @join__ directives
+    fn process_extension_schema(
+        &self,
+        subgraph_name: &str,
+        schema: &str,
+    ) -> Result<(String, Vec<String>, Vec<String>, String)> {
+        // Returns: (types_string, query_fields, mutation_fields)
 
-        let graph_name = subgraph_name.to_uppercase();
+        let graph_name = subgraph_name.to_ascii_uppercase();
 
         // Parse extension schema and add @join__ directives
-        let mut processed = String::new();
+        let mut types = String::new();
+        let mut query_fields = Vec::new();
+        let mut mutation_fields = Vec::new();
         let mut inside_extend_block = false;
-        let mut brace_depth = 0;
+        let mut extend_type_name = String::new();
+        let mut extend_fields = Vec::new();
+        let mut inside_type_block = false;
+        let mut current_type_lines = Vec::new();
+        let mut type_brace_depth = 0;
 
         for line in schema.lines() {
             let line = line.trim();
@@ -196,79 +264,150 @@ enum join__Graph {
                 continue;
             }
 
-            // Handle extend type blocks - we skip these entirely since we'll merge fields into core types
+            // Handle extend type blocks - collect fields to be merged later
             if line.starts_with("extend type") {
                 inside_extend_block = true;
-                brace_depth = 0;
+                // Extract type name (e.g., "Query" from "extend type Query {")
+                extend_type_name = line
+                    .replace("extend type", "")
+                    .replace("{", "")
+                    .trim()
+                    .to_string();
+                extend_fields.clear();
                 continue;
             }
 
             if inside_extend_block {
-                // Count braces to know when the extend block ends
-                brace_depth += line.chars().filter(|&c| c == '{').count() as i32;
-                brace_depth -= line.chars().filter(|&c| c == '}').count() as i32;
+                // Skip opening brace
+                if line == "{" {
+                    continue;
+                }
 
-                if brace_depth <= 0 {
+                // Check for closing brace
+                if line == "}" {
                     inside_extend_block = false;
+                    // Add the extended fields to appropriate list
+                    if !extend_fields.is_empty() {
+                        let fields_with_directive: Vec<String> = extend_fields
+                            .iter()
+                            .map(|f| format!("{} @join__field(graph: {})", f, graph_name))
+                            .collect();
+
+                        if extend_type_name == "Query" {
+                            query_fields.extend(fields_with_directive);
+                        } else if extend_type_name == "Mutation" {
+                            mutation_fields.extend(fields_with_directive);
+                        }
+                    }
+                    continue;
                 }
-                continue; // Skip all content inside extend blocks
+
+                // Collect field definitions
+                if line.contains(":") {
+                    extend_fields.push(line.to_string());
+                }
+                continue;
             }
 
-            // Skip any orphaned field definitions (lines that contain ":" but are not within a proper type definition)
-            if line.contains(":") && !line.contains("directive") && !line.contains("scalar") && !line.contains("enum") && !line.contains("input") && !line.contains("type") && !line.contains("interface") && !line.contains("union") {
-                continue; // Skip orphaned field definitions
+            // Handle regular type/enum/input definitions
+            if (line.starts_with("type ")
+                || line.starts_with("enum ")
+                || line.starts_with("input "))
+                && !inside_type_block
+            {
+                inside_type_block = true;
+                type_brace_depth = 0;
+                current_type_lines.clear();
+                current_type_lines.push(line.to_string());
+
+                // Check if opening brace is on the same line
+                if line.contains("{") {
+                    type_brace_depth += 1;
+                }
+                continue;
             }
 
-            // Process regular schema definitions
-            if line.starts_with("type ") && !line.contains("@join__type") {
-                // Add join type directive to regular types, handling existing directives
-                if line.contains("{") {
-                    // Type definition with opening brace on same line
-                    let parts: Vec<&str> = line.splitn(2, '{').collect();
-                    processed.push_str(&format!("{} @join__type(graph: {}) {{\n", parts[0].trim(), graph_name));
-                } else if line.contains("@") {
-                    // Type already has directives, add ours before existing ones
-                    let parts: Vec<&str> = line.splitn(2, '@').collect();
-                    processed.push_str(&format!("{} @join__type(graph: {}) @{}\n", parts[0].trim(), graph_name, parts[1]));
-                } else {
-                    // No existing directives
-                    processed.push_str(&format!("{} @join__type(graph: {})\n", line, graph_name));
+            if inside_type_block {
+                current_type_lines.push(line.to_string());
+
+                // Count braces
+                type_brace_depth += line.chars().filter(|&c| c == '{').count() as i32;
+                type_brace_depth -= line.chars().filter(|&c| c == '}').count() as i32;
+
+                // When we close the type definition, process it
+                if type_brace_depth <= 0 {
+                    inside_type_block = false;
+                    // Process the complete type definition
+                    let type_def = self.process_type_definition(&current_type_lines, &graph_name);
+                    types.push_str(&type_def);
+                    types.push('\n');
                 }
-            } else if line.starts_with("enum ") && !line.contains("@join__type") {
-                // Add join type directive to enums
-                if line.contains("{") {
-                    // Enum definition with opening brace on same line
-                    let parts: Vec<&str> = line.splitn(2, '{').collect();
-                    processed.push_str(&format!("{} @join__type(graph: {}) {{\n", parts[0].trim(), graph_name));
-                } else {
-                    processed.push_str(&format!("{} @join__type(graph: {})\n", line, graph_name));
-                }
-            } else if line.starts_with("input ") && !line.contains("@join__type") {
-                // Add join type directive to input types
-                if line.contains("{") {
-                    // Input definition with opening brace on same line
-                    let parts: Vec<&str> = line.splitn(2, '{').collect();
-                    processed.push_str(&format!("{} @join__type(graph: {}) {{\n", parts[0].trim(), graph_name));
-                } else {
-                    processed.push_str(&format!("{} @join__type(graph: {})\n", line, graph_name));
-                }
-            } else if line.contains(":") && !line.contains("@join__field") {
-                // Add join field directive to field definitions
-                if line.contains("@") {
-                    // Field already has directives, add ours before existing ones
-                    let parts: Vec<&str> = line.splitn(2, '@').collect();
-                    processed.push_str(&format!("  {} @join__field(graph: {}) @{}\n", parts[0].trim(), graph_name, parts[1]));
-                } else {
-                    // No existing directives
-                    processed.push_str(&format!("  {} @join__field(graph: {})\n", line, graph_name));
-                }
-            } else {
-                // Copy other lines as-is (opening/closing braces, etc.)
-                processed.push_str(&format!("{}\n", line));
+                continue;
             }
         }
 
-        Ok(processed)
+        Ok((types, query_fields, mutation_fields, graph_name))
+    }
+
+    fn process_type_definition(&self, lines: &[String], graph_name: &str) -> String {
+        if lines.is_empty() {
+            return String::new();
+        }
+
+        let mut result = String::new();
+        let first_line = &lines[0];
+
+        // Add the type/enum/input declaration with @join__type directive
+        if first_line.contains("@") {
+            // Already has directives, add ours before existing ones
+            let parts: Vec<&str> = first_line.splitn(2, '@').collect();
+            result.push_str(&format!(
+                "{} @join__type(graph: {}) @{}\n",
+                parts[0].trim(),
+                graph_name,
+                parts[1]
+            ));
+        } else if first_line.contains("{") {
+            // Opening brace on same line
+            let parts: Vec<&str> = first_line.splitn(2, '{').collect();
+            result.push_str(&format!(
+                "{} @join__type(graph: {}) {{\n",
+                parts[0].trim(),
+                graph_name
+            ));
+        } else {
+            // No directives or braces
+            result.push_str(&format!(
+                "{} @join__type(graph: {})\n",
+                first_line, graph_name
+            ));
+        }
+
+        // Process the body lines
+        for line in lines.iter().skip(1) {
+            if line == "{" || line == "}" {
+                result.push_str(&format!("{}\n", line));
+            } else if line.contains(":") && !line.contains("@join__field") {
+                // This is a field definition - add @join__field directive
+                if line.contains("@") {
+                    // Already has directives, add ours before existing ones
+                    let parts: Vec<&str> = line.splitn(2, '@').collect();
+                    result.push_str(&format!(
+                        "  {} @join__field(graph: {}) @{}\n",
+                        parts[0].trim(),
+                        graph_name,
+                        parts[1]
+                    ));
+                } else {
+                    result.push_str(&format!("  {} @join__field(graph: {})\n", line, graph_name));
+                }
+            } else {
+                // Enum values or other content
+                result.push_str(&format!("{}\n", line));
+            }
+        }
+
+        result
     }
 }
 

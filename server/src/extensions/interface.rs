@@ -74,7 +74,12 @@ pub struct ExtensionInstance {
 
 #[allow(dead_code)] // Methods will be used for extension execution
 impl ExtensionInstance {
-    pub fn new(store: Store<WasiP1Ctx>, instance: Instance, engine: Engine, limits: ExtensionLimits) -> Self {
+    pub fn new(
+        store: Store<WasiP1Ctx>,
+        instance: Instance,
+        engine: Engine,
+        limits: ExtensionLimits,
+    ) -> Self {
         Self {
             store,
             instance,

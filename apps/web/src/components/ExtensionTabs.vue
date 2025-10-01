@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, onErrorCaptured } from 'vue';
 import { repoTabs } from 'virtual:forge/slots/repo-tabs';
 import type { RepositoryContext } from '../lib/slots';
 
 const props = defineProps<{
 	repository: RepositoryContext;
 }>();
+
+const componentError = ref<string | null>(null);
 
 const activeTab = ref<string>(repoTabs[0]?.id || 'files');
 
@@ -17,6 +19,12 @@ const tabs = computed(() => [
 const activeSlot = computed(() => {
 	return repoTabs.find((slot) => slot.id === activeTab.value);
 });
+
+onErrorCaptured((err) => {
+	console.error('[ExtensionTabs] Component error:', err);
+	componentError.value = err instanceof Error ? err.message : 'Extension component failed to render';
+	return false;
+});
 </script>
 
 <template>
@@ -26,7 +34,7 @@ const activeSlot = computed(() => {
 				<button
 					v-for="tab in tabs"
 					:key="tab.id"
-					@click="activeTab = tab.id"
+					@click="activeTab = tab.id; componentError = null"
 					:class="[
 						'pb-3 text-sm font-medium border-b-2 transition',
 						activeTab === tab.id
@@ -39,12 +47,27 @@ const activeSlot = computed(() => {
 			</nav>
 		</div>
 
-		<div v-if="activeTab === 'files'">
+		<div v-if="componentError" class="p-4 border border-red-300 bg-red-50 rounded">
+			<h3 class="text-sm font-semibold text-red-800 mb-1">Extension Error</h3>
+			<p class="text-sm text-red-700">{{ componentError }}</p>
+			<button
+				@click="componentError = null; activeTab = 'files'"
+				class="mt-2 text-xs text-red-800 underline hover:no-underline"
+			>
+				Return to Files tab
+			</button>
+		</div>
+
+		<div v-else-if="activeTab === 'files'">
 			<slot name="files" />
 		</div>
 
 		<div v-else-if="activeSlot">
 			<component :is="activeSlot.component" :repository="repository" />
+		</div>
+
+		<div v-else class="p-4 text-muted-foreground">
+			No content available for this tab.
 		</div>
 	</div>
 </template>

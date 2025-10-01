@@ -1,4 +1,9 @@
 import type { AstroIntegration } from 'astro';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 interface SlotRegistry {
 	repoTabs: Array<{
@@ -31,18 +36,18 @@ export default function issuesIntegration(options?: IssuesIntegrationOptions): A
 			'astro:config:setup': ({ injectRoute }) => {
 				injectRoute({
 					pattern: '/issues',
-					entrypoint: '@forgepoint/astro-integration-issues/pages/IssueList.astro',
+					entrypoint: resolve(__dirname, './pages/IssueList.astro'),
 				});
 				injectRoute({
 					pattern: '/issues/[id]',
-					entrypoint: '@forgepoint/astro-integration-issues/pages/IssueDetail.astro',
+					entrypoint: resolve(__dirname, './pages/IssueDetail.astro'),
 				});
 
 				if (options?.slotRegistry) {
 					options.slotRegistry.repoTabs.push({
 						id: 'issues',
 						label: 'Issues',
-						componentPath: '@forgepoint/astro-integration-issues/components/IssuesTab.vue',
+						componentPath: resolve(__dirname, './components/IssuesTab.vue'),
 						order: 10,
 					});
 				}
