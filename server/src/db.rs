@@ -61,7 +61,7 @@ pub async fn init_in_memory_pool() -> Result<(SqlitePool, PathBuf)> {
     Ok((pool, temp_db_path))
 }
 
-pub fn normalize_path<P: Into<PathBuf>>(path: P) -> Result<PathBuf> {
+pub(crate) fn normalize_path<P: Into<PathBuf>>(path: P) -> Result<PathBuf> {
     let path = path.into();
     if path.is_absolute() {
         return Ok(path);

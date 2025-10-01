@@ -35,15 +35,12 @@ clean-extension:
     rm -f {{FORGE_EXTENSIONS_DIR}}/issues.wasm
     rm -f target/wasm32-wasip1/release/forgepoint_extension_issues.wasm
 
-# Build the forge CLI binary
+# Build the forge CLI binary (HTTP-based remote management tool)
 build-cli:
-    nix develop --impure -c cargo build --manifest-path server/Cargo.toml --bin forge --release
+    nix develop --impure -c cargo build --package forge-cli --release
 
 # Run the forge CLI (pass arguments after --)
 # Example: just run-cli repo create my-project
 run-cli *ARGS:
-    mkdir -p {{FORGE_DB_PATH}}
-    mkdir -p {{FORGE_REPOS_PATH}}
-    FORGE_DB_PATH={{FORGE_DB_PATH}} FORGE_REPOS_PATH={{FORGE_REPOS_PATH}} \
-        nix develop --impure -c cargo run --manifest-path server/Cargo.toml --bin forge -- {{ARGS}}
+    nix develop --impure -c cargo run --package forge-cli -- {{ARGS}}
 

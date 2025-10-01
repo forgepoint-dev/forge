@@ -1249,6 +1249,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 
 [[package]]
+name = "forge-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "forgepoint-extension-issues"
 version = "0.1.0"
 dependencies = [
@@ -4614,7 +4626,6 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "cap-std",
- "clap",
  "cuid2",
  "futures",
  "gix",

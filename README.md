@@ -5,7 +5,7 @@ A single-user code forge with a GraphQL API for managing groups and repositories
 ## Features
 
 - **GraphQL API** - Complete API for managing repositories and groups
-- **CLI Tools** - Command-line interface for repository management
+- **HTTP CLI** - Remote repository management via command-line
 - **Hierarchical Organization** - Nest repositories within groups
 - **WASM Extensions** - Secure, sandboxed plugin system
 - **Local & Remote Repositories** - Support for both local working copies and remote repository links
@@ -43,23 +43,24 @@ The GraphQL playground will be available at http://localhost:8000/graphql
 
 ### Using the CLI
 
-The CLI provides command-line tools for managing repositories:
+The CLI provides HTTP-based remote management of repositories:
 
 ```bash
 # Build the CLI
-cd server
-cargo build --release --bin forge
+cd cli
+cargo build --release
 
 # Create a repository
-FORGE_DB_PATH=./.forge/db FORGE_REPOS_PATH=./.forge/repos \
-  ../target/release/forge repo create my-project
+../target/release/forge repo create my-project
 
 # Link a remote repository
-FORGE_DB_PATH=./.forge/db FORGE_REPOS_PATH=./.forge/repos \
-  ../target/release/forge repo link https://github.com/torvalds/linux
+../target/release/forge repo link https://github.com/torvalds/linux
+
+# Connect to a remote server
+../target/release/forge --api-url https://forge.example.com/graphql repo create my-project
 ```
 
-See [server/CLI.md](server/CLI.md) for complete CLI documentation.
+See [cli/README.md](cli/README.md) for complete CLI documentation.
 
 ## Architecture
 
@@ -141,7 +142,7 @@ nix fmt  # Formats all tracked files
 
 ## Documentation
 
-- [CLI Documentation](server/CLI.md)
+- [CLI Documentation](cli/README.md)
 - [Architecture Decision Records](docs/adrs/)
 - [Product Requirements](docs/prds/)
 - [RFCs](docs/rfcs/)
