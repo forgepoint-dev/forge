@@ -1,8 +1,125 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { ExpressiveCodeEngine } from '@expressive-code/core'
+import { toHtml } from '@expressive-code/core/hast'
+import { loadShikiTheme, pluginShiki } from '@expressive-code/plugin-shiki'
+import { pluginLineNumbers } from '@expressive-code/plugin-line-numbers'
 import UiButton from './ui/button.vue'
 import UiInput from './ui/input.vue'
+import ExtensionTabs from './ExtensionTabs.vue'
+import ActionsMenu from './ActionsMenu.vue'
 import { graphqlRequest } from '../lib/graphql'
+import type { RepositoryContext } from '../lib/slots'
+
+let expressiveEnginePromise: Promise<ExpressiveCodeEngine> | null = null
+let expressiveGlobalsPromise: Promise<void> | null = null
+const expressiveStyleRegistry = new Set<string>()
+const expressiveScriptRegistry = new Set<string>()
+
+async function getExpressiveEngine() {
+  if (!expressiveEnginePromise) {
+    expressiveEnginePromise = (async () => {
+      const [lightTheme, darkTheme] = await Promise.all([
+        loadShikiTheme('rose-pine-dawn'),
+        loadShikiTheme('rose-pine-moon'),
+      ])
+
+      return new ExpressiveCodeEngine({
+        themes: [lightTheme, darkTheme],
+        useDarkModeMediaQuery: false,
+        themeCssSelector: (theme) =>
+          theme.type === 'dark' ? '.dark' : ':root:not(.dark)',
+        plugins: [
+          pluginShiki({
+            engine: 'javascript',
+            langAlias: {
+              md: 'md',
+              markdown: 'md',
+              yml: 'yaml',
+            },
+          }),
+          pluginLineNumbers(),
+        ],
+      })
+    })()
+  }
+
+  return expressiveEnginePromise
+}
+
+async function ensureExpressiveGlobals(engine: ExpressiveCodeEngine) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  if (!expressiveGlobalsPromise) {
+    expressiveGlobalsPromise = (async () => {
+      const [baseStyles, themeStyles, jsModules] = await Promise.all([
+        engine.getBaseStyles(),
+        engine.getThemeStyles(),
+        engine.getJsModules(),
+      ])
+
+      injectExpressiveStyle(baseStyles, 'base')
+      injectExpressiveStyle(themeStyles, 'themes')
+
+      for (const moduleCode of jsModules) {
+        injectExpressiveModule(moduleCode)
+      }
+    })()
+  }
+
+  await expressiveGlobalsPromise
+}
+
+function injectExpressiveStyle(css: string, marker: string) {
+  if (!css || typeof window === 'undefined' || expressiveStyleRegistry.has(css)) {
+    return
+  }
+
+  const styleEl = document.createElement('style')
+  styleEl.setAttribute('data-expressive-code', marker)
+  styleEl.textContent = css
+  document.head.append(styleEl)
+  expressiveStyleRegistry.add(css)
+}
+
+function injectExpressiveModule(code: string) {
+  if (!code || typeof window === 'undefined' || expressiveScriptRegistry.has(code)) {
+    return
+  }
+
+  const script = document.createElement('script')
+  script.type = 'module'
+  script.setAttribute('data-expressive-code', 'module')
+  script.textContent = code
+  document.head.append(script)
+  expressiveScriptRegistry.add(code)
+}
+
+async function renderExpressiveHtml(code: string, language: string | null) {
+  const engine = await getExpressiveEngine()
+  await ensureExpressiveGlobals(engine)
+
+  let result
+  try {
+    result = await engine.render({ code, language: language ?? undefined })
+  } catch (err) {
+    if (language) {
+      result = await engine.render({ code })
+    } else {
+      throw err
+    }
+  }
+
+  if (typeof window !== 'undefined') {
+    for (const style of result.styles) {
+      injectExpressiveStyle(style, 'block')
+    }
+  }
+
+  return toHtml(result.renderedGroupAst)
+}
 
 const props = defineProps<{ fullPath: string }>()
 
@@ -24,7 +141,7 @@ type GroupDetails = {
 type RepositoryEntry = {
   name: string
   path: string
-  kind: 'FILE' | 'DIRECTORY'
+  type: 'FILE' | 'DIRECTORY'
   size: number | null
 }
 
@@ -32,6 +149,17 @@ type RepositoryEntriesResponse = {
   treePath: string
   entries: RepositoryEntry[]
 }
+
+type RepositoryFileResponse = {
+  path: string
+  name: string
+  size: number
+  isBinary: boolean
+  text: string | null
+  truncated: boolean
+}
+
+const PREVIEW_LIMIT_BYTES = 128 * 1024
 
 const segments = computed(() => props.fullPath.split('/').filter(Boolean))
 const repoName = computed(() => segments.value[segments.value.length - 1] || '')
@@ -48,9 +176,26 @@ const resolvedTreePath = ref('')
 const entries = ref<RepositoryEntry[]>([])
 const entriesLoading = ref(false)
 const entriesError = ref<string | null>(null)
+const selectedFilePath = ref<string | null>(null)
+const fileContent = ref<RepositoryFileResponse | null>(null)
+const fileLoading = ref(false)
+const fileError = ref<string | null>(null)
+const filePreviewHtml = ref<string | null>(null)
 
 const isRemote = computed(() => repository.value?.isRemote ?? false)
 const remoteUrl = computed(() => repository.value?.remoteUrl ?? null)
+
+const repositoryContext = computed<RepositoryContext | null>(() => {
+  if (!repository.value) return null
+  return {
+    version: 1,
+    id: repository.value.id,
+    slug: repository.value.slug,
+    fullPath: props.fullPath,
+    isRemote: repository.value.isRemote,
+    remoteUrl: repository.value.remoteUrl ?? null,
+  }
+})
 
 const siblingRepositories = computed(() => {
   if (!groupDetails.value) return []
@@ -73,6 +218,58 @@ const breadcrumbItems = computed(() => {
 })
 
 const hasEntries = computed(() => entries.value.length > 0)
+const selectedFileName = computed(() => {
+  if (fileContent.value) return fileContent.value.name
+  if (!selectedFilePath.value) return ''
+  const segments = selectedFilePath.value.split('/').filter(Boolean)
+  return segments[segments.length - 1] || ''
+})
+
+const isBinaryFile = computed(() => fileContent.value?.isBinary ?? false)
+
+const isEmptyTextFile = computed(() => {
+  if (!fileContent.value || fileContent.value.isBinary) return false
+  return (fileContent.value.text ?? '').length === 0
+})
+
+const fileSizeFormatted = computed(() => {
+  if (!fileContent.value) return '—'
+  return formatSize(fileContent.value.size)
+})
+
+function guessLanguage(filename: string): string | null {
+  const ext = filename.split('.').pop()?.toLowerCase()
+  if (!ext) return null
+
+  const lookup: Record<string, string> = {
+    ts: 'ts',
+    tsx: 'tsx',
+    js: 'js',
+    jsx: 'jsx',
+    json: 'json',
+    rs: 'rust',
+    ron: 'ron',
+    toml: 'toml',
+    md: 'md',
+    markdown: 'md',
+    sh: 'bash',
+    bash: 'bash',
+    yml: 'yaml',
+    yaml: 'yaml',
+    css: 'css',
+    scss: 'scss',
+    html: 'html',
+    vue: 'vue',
+    astro: 'astro',
+    graphql: 'graphql',
+    gql: 'graphql',
+    sql: 'sql',
+    py: 'python',
+    go: 'go',
+  }
+
+  return lookup[ext] ?? null
+}
 
 async function loadData(path: string) {
   loading.value = true
@@ -84,6 +281,16 @@ async function loadData(path: string) {
   entriesLoading.value = false
   treePath.value = ''
   resolvedTreePath.value = ''
+  selectedFilePath.value = null
+  fileContent.value = null
+  fileError.value = null
+  fileLoading.value = false
+  filePreviewHtml.value = null
+  branches.value = []
+  branchesError.value = null
+  branch.value = ''
+  branchInitialized = false
+  activeBranchReference = null
 
   try {
     const repoResponse = await graphqlRequest<{ getRepository: RepositoryDetails | null }>({
@@ -111,6 +318,7 @@ async function loadData(path: string) {
 
     repository.value = repoResponse.getRepository
 
+    await loadBranches(path)
     await loadRepositoryEntries(path, treePath.value)
 
     if (groups.value.length > 0) {
@@ -146,6 +354,46 @@ async function loadData(path: string) {
   }
 }
 
+async function loadBranches(path: string) {
+  branchesLoading.value = true
+  branchesError.value = null
+
+  try {
+    const response = await graphqlRequest<{ listRepositoryBranches: BranchOption[] | null }>({
+      query: /* GraphQL */ `
+        query RepositoryBranches($path: String!) {
+          listRepositoryBranches(path: $path) {
+            name
+            reference
+            isDefault
+          }
+        }
+      `,
+      variables: { path },
+    })
+
+    const payload = response.listRepositoryBranches ?? []
+    branches.value = payload
+
+    const defaultBranch =
+      payload.find((item) => item.isDefault) ?? payload[0] ?? null
+
+    branchInitialized = true
+    if (defaultBranch) {
+      branch.value = defaultBranch.reference
+    } else {
+      branch.value = ''
+    }
+  } catch (err) {
+    branches.value = []
+    branch.value = ''
+    branchInitialized = true
+    branchesError.value = err instanceof Error ? err.message : 'Failed to load branches'
+  } finally {
+    branchesLoading.value = false
+  }
+}
+
 onMounted(() => {
   loadData(props.fullPath)
 })
@@ -159,9 +407,18 @@ watch(
   },
 )
 
-// Placeholder values until repo metadata expands
-const branches = ['main']
-const branch = ref('main')
+type BranchOption = {
+  name: string
+  reference: string
+  isDefault: boolean
+}
+
+const branches = ref<BranchOption[]>([])
+const branch = ref<string>('')
+const branchesLoading = ref(false)
+const branchesError = ref<string | null>(null)
+let branchInitialized = false
+let activeBranchReference: string | null = null
 
 let entriesRequestId = 0
 
@@ -171,21 +428,30 @@ async function loadRepositoryEntries(path: string, tree: string) {
   entriesError.value = null
 
   try {
+    const variables: { path: string; treePath: string; branch?: string | null } = {
+      path,
+      treePath: tree,
+    }
+
+    if (branch.value) {
+      variables.branch = branch.value
+    }
+
     const response = await graphqlRequest<{ browseRepository: RepositoryEntriesResponse | null }>({
       query: /* GraphQL */ `
-        query BrowseRepository($path: String!, $treePath: String) {
-          browseRepository(path: $path, treePath: $treePath) {
+        query BrowseRepository($path: String!, $treePath: String, $branch: String) {
+          browseRepository(path: $path, treePath: $treePath, branch: $branch) {
             treePath
             entries {
               name
               path
-              kind
+              type
               size
             }
           }
         }
       `,
-      variables: { path, treePath: tree || null },
+      variables,
     })
 
     if (requestId !== entriesRequestId) {
@@ -197,16 +463,34 @@ async function loadRepositoryEntries(path: string, tree: string) {
       entries.value = []
       entriesError.value = 'Repository contents are unavailable.'
       resolvedTreePath.value = tree
+      activeBranchReference = branch.value || null
       return
     }
 
     entries.value = payload.entries
+    activeBranchReference = branch.value || null
+    if (selectedFilePath.value) {
+      const stillPresent = payload.entries.some((entry) => entry.path === selectedFilePath.value)
+      if (!stillPresent) {
+        selectedFilePath.value = null
+        fileContent.value = null
+        fileError.value = null
+        fileLoading.value = false
+        filePreviewHtml.value = null
+      }
+    }
     resolvedTreePath.value = payload.treePath
   } catch (err) {
     if (requestId !== entriesRequestId) {
       return
     }
     entries.value = []
+    activeBranchReference = branch.value || null
+    selectedFilePath.value = null
+    fileContent.value = null
+    fileError.value = null
+    fileLoading.value = false
+    filePreviewHtml.value = null
     entriesError.value = err instanceof Error ? err.message : 'Failed to load repository contents'
     resolvedTreePath.value = tree
   } finally {
@@ -216,18 +500,117 @@ async function loadRepositoryEntries(path: string, tree: string) {
   }
 }
 
+async function openFile(path: string) {
+  if (!repository.value) return
+  if (selectedFilePath.value === path && fileContent.value && !fileError.value) {
+    return
+  }
+
+  selectedFilePath.value = path
+  fileLoading.value = true
+  fileError.value = null
+  fileContent.value = null
+  filePreviewHtml.value = null
+
+  try {
+    const response = await graphqlRequest<{ readRepositoryFile: RepositoryFileResponse | null }>({
+      query: /* GraphQL */ `
+        query ReadRepositoryFile($path: String!, $filePath: String!, $branch: String) {
+          readRepositoryFile(path: $path, filePath: $filePath, branch: $branch) {
+            path
+            name
+            size
+            isBinary
+            text
+            truncated
+          }
+        }
+      `,
+      variables: {
+        path: props.fullPath,
+        filePath: path,
+        branch: branch.value || null,
+      },
+    })
+
+    const payload = response.readRepositoryFile
+    if (!payload) {
+      fileError.value = 'File preview is unavailable.'
+      return
+    }
+
+    fileContent.value = payload
+
+    if (!payload.isBinary && payload.text !== null) {
+      try {
+        filePreviewHtml.value = await renderExpressiveHtml(
+          payload.text,
+          guessLanguage(payload.name),
+        )
+      } catch (renderErr) {
+        console.error(renderErr)
+        filePreviewHtml.value = null
+      }
+    }
+  } catch (err) {
+    fileError.value = err instanceof Error ? err.message : 'Failed to load file'
+  } finally {
+    fileLoading.value = false
+  }
+}
+
 watch(
   treePath,
   (next, prev) => {
     if (!repository.value || next === prev) {
       return
     }
+    selectedFilePath.value = null
+    fileContent.value = null
+    fileError.value = null
+    fileLoading.value = false
+    filePreviewHtml.value = null
     loadRepositoryEntries(props.fullPath, next)
+  },
+)
+
+watch(
+  branch,
+  (next, prev) => {
+    if (!branchInitialized || next === prev) {
+      return
+    }
+    if (!repository.value) {
+      return
+    }
+
+    const normalized = next || null
+    if (normalized === activeBranchReference) {
+      return
+    }
+
+    selectedFilePath.value = null
+    fileContent.value = null
+    fileError.value = null
+    fileLoading.value = false
+    filePreviewHtml.value = null
+
+    const resetPath = ''
+    if (treePath.value !== resetPath) {
+      treePath.value = resetPath
+    } else {
+      loadRepositoryEntries(props.fullPath, resetPath)
+    }
   },
 )
 
 function navigateToTree(target: string) {
   if (treePath.value === target) return
+  selectedFilePath.value = null
+  fileContent.value = null
+  fileError.value = null
+  fileLoading.value = false
+  filePreviewHtml.value = null
   treePath.value = target
 }
 
@@ -272,6 +655,7 @@ function formatSize(size: number | null | undefined) {
             Public
           </span>
           <div class="ml-auto flex items-center gap-2">
+            <ActionsMenu scope="repository" :repository="repositoryContext ?? undefined" />
             <UiButton variant="outline">Open in IDE</UiButton>
             <UiButton>Clone</UiButton>
           </div>
@@ -300,11 +684,26 @@ function formatSize(size: number | null | undefined) {
       </div>
       <div v-else class="space-y-6">
         <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div class="flex items-center gap-2">
-            <label class="text-xs text-muted-foreground">Branch</label>
-            <select v-model="branch" class="h-9 rounded-md border border-input bg-background px-2 text-sm">
-              <option v-for="b in branches" :key="b" :value="b">{{ b }}</option>
-            </select>
+          <div class="flex flex-col gap-1">
+            <div class="flex items-center gap-2">
+              <label class="text-xs text-muted-foreground">Branch</label>
+              <select
+                v-model="branch"
+                :disabled="branchesLoading || branches.length === 0"
+                class="h-9 min-w-[10rem] rounded-md border border-input bg-background px-2 text-sm disabled:opacity-60"
+              >
+                <option v-if="branchesLoading" value="">Loading…</option>
+                <option v-else-if="branches.length === 0" value="">HEAD</option>
+                <option
+                  v-for="b in branches"
+                  :key="b.reference"
+                  :value="b.reference"
+                >
+                  {{ b.isDefault ? `${b.name} (default)` : b.name }}
+                </option>
+              </select>
+            </div>
+            <p v-if="branchesError" class="text-xs text-destructive">{{ branchesError }}</p>
           </div>
           <div class="flex items-center gap-2 w-full sm:w-80">
             <UiInput placeholder="Search this repo" />
@@ -312,7 +711,9 @@ function formatSize(size: number | null | undefined) {
           </div>
         </div>
 
-        <section class="rounded-lg border bg-card">
+        <ExtensionTabs v-if="repositoryContext" :repository="repositoryContext">
+          <template #files>
+            <section class="rounded-lg border bg-card">
           <div class="flex flex-col gap-2 border-b px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
             <h3 class="text-sm font-semibold text-muted-foreground">Repository Contents</h3>
             <nav class="flex flex-wrap items-center gap-1 text-xs text-muted-foreground sm:text-sm">
@@ -364,30 +765,110 @@ function formatSize(size: number | null | undefined) {
                   </tr>
                 </thead>
                 <tbody class="divide-y bg-background/60">
-                  <tr v-for="entry in entries" :key="entry.path" class="transition hover:bg-muted/50">
+                  <tr
+                    v-for="entry in entries"
+                    :key="entry.path"
+                    class="transition hover:bg-muted/50"
+                    :class="{
+                      'bg-muted/50': entry.type === 'DIRECTORY'
+                        ? resolvedTreePath === entry.path
+                        : selectedFilePath === entry.path,
+                    }"
+                  >
                     <td class="px-4 py-2">
                       <button
-                        v-if="entry.kind === 'DIRECTORY'"
+                        v-if="entry.type === 'DIRECTORY'"
                         type="button"
-                        class="font-medium text-left text-foreground hover:underline"
+                        class="w-full font-medium text-left text-foreground hover:underline"
                         @click="navigateToTree(entry.path)"
                       >
                         {{ entry.name }}
                       </button>
-                      <span v-else class="text-foreground">{{ entry.name }}</span>
+                      <button
+                        v-else
+                        type="button"
+                        class="w-full font-medium text-left text-foreground hover:underline"
+                        @click="openFile(entry.path)"
+                      >
+                        {{ entry.name }}
+                      </button>
                     </td>
                     <td class="px-4 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                      {{ entry.kind === 'DIRECTORY' ? 'Directory' : 'File' }}
+                      {{ entry.type === 'DIRECTORY' ? 'Directory' : 'File' }}
                     </td>
                     <td class="px-4 py-2 text-right text-xs text-muted-foreground">
-                      {{ entry.kind === 'DIRECTORY' ? '—' : formatSize(entry.size) }}
+                      {{ entry.type === 'DIRECTORY' ? '—' : formatSize(entry.size) }}
                     </td>
                   </tr>
                 </tbody>
               </table>
             </div>
+            <div v-if="selectedFilePath" class="overflow-hidden rounded-md border">
+              <div class="flex flex-wrap items-center justify-between gap-3 border-b bg-muted/40 px-4 py-3">
+                <div>
+                  <p class="font-medium text-foreground">{{ selectedFileName || selectedFilePath }}</p>
+                  <p class="text-xs text-muted-foreground">
+                    {{ fileSizeFormatted }}
+                    <span v-if="fileContent?.truncated">
+                      · Showing first {{ Math.floor(PREVIEW_LIMIT_BYTES / 1024) }} KB
+                    </span>
+                  </p>
+                </div>
+              </div>
+              <div class="max-h-[32rem] overflow-auto bg-background font-mono text-sm">
+                <div
+                  v-if="fileLoading"
+                  class="px-4 py-6 text-center text-muted-foreground"
+                >
+                  Loading file…
+                </div>
+                <div
+                  v-else-if="fileError"
+                  class="m-4 rounded border border-destructive/30 bg-destructive/10 px-4 py-6 text-center text-destructive"
+                >
+                  {{ fileError }}
+                </div>
+                <div
+                  v-else-if="isBinaryFile"
+                  class="px-4 py-6 text-center text-muted-foreground"
+                >
+                  This file is binary and cannot be previewed.
+                </div>
+                <div
+                  v-else-if="isEmptyTextFile"
+                  class="px-4 py-6 text-center text-muted-foreground"
+                >
+                  This file is empty.
+                </div>
+                <div
+                  v-else-if="fileContent && fileContent.text"
+                  class="border-t border-border"
+                >
+                  <div
+                    v-if="filePreviewHtml"
+                    class="expressive-code-viewer"
+                    v-html="filePreviewHtml"
+                  ></div>
+                  <pre v-else class="overflow-x-auto whitespace-pre px-4 py-3 text-xs">{{ fileContent.text }}</pre>
+                  <p
+                    v-if="fileContent.truncated"
+                    class="px-4 pb-4 pt-2 text-xs text-muted-foreground"
+                  >
+                    Preview truncated. Showing first {{ Math.floor(PREVIEW_LIMIT_BYTES / 1024) }} KB.
+                  </p>
+                </div>
+                <div
+                  v-else
+                  class="px-4 py-6 text-center text-muted-foreground"
+                >
+                  No preview available for this file.
+                </div>
+              </div>
+            </div>
           </div>
         </section>
+          </template>
+        </ExtensionTabs>
 
         <section class="rounded-lg border p-5 bg-card">
           <h3 class="text-sm font-semibold text-muted-foreground">Repository Details</h3>
@@ -427,3 +908,22 @@ function formatSize(size: number | null | undefined) {
     </div>
   </div>
 </template>
+
+<style scoped>
+.expressive-code-viewer {
+  padding: 0;
+}
+
+.expressive-code-viewer :deep(.expressive-code) {
+  margin: 0;
+  background-color: transparent;
+}
+
+.expressive-code-viewer :deep(.expressive-code pre) {
+  font-size: 0.875rem;
+}
+
+.expressive-code-viewer :deep(.expressive-code .ec-line-numbers) {
+  user-select: none;
+}
+</style>

@@ -1,0 +1,147 @@
+name: Build Extensions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'extensions/**'
+      - 'packages/wit/**'
+      - '.github/workflows/build-extensions.yml'
+  pull_request:
+    paths:
+      - 'extensions/**'
+      - 'packages/wit/**'
+      - '.github/workflows/build-extensions.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: ""
+    strategy:
+      matrix:
+        extension:
+          - issues
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/determinate-nix-action@main
+
+      - name: Build ${{ matrix.extension }} extension
+        working-directory: extensions/${{ matrix.extension }}/api
+        run: |
+          nix develop --impure -c cargo build --target wasm32-wasip1 --release
+
+      - name: Run tests
+        working-directory: extensions/${{ matrix.extension }}/api
+        run: |
+          nix develop --impure -c cargo test
+
+      - name: Check formatting
+        working-directory: extensions/${{ matrix.extension }}/api
+        run: |
+          nix develop --impure -c cargo fmt --check
+
+      - name: Run clippy
+        working-directory: extensions/${{ matrix.extension }}/api
+        run: |
+          nix develop --impure -c cargo clippy -- -D warnings
+
+      - name: Upload WASM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.extension }}-extension
+          path: extensions/${{ matrix.extension }}/api/target/wasm32-wasip1/release/*.wasm
+          retention-days: 7
+
+  publish-oci:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    env:
+      RUSTFLAGS: ""
+    strategy:
+      matrix:
+        extension:
+          - issues
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download WASM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.extension }}-extension
+          path: ./artifacts
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install oras CLI
+        uses: oras-project/setup-oras@v1
+        with:
+          version: v1.2.0
+
+      - name: Extract version
+        id: version
+        working-directory: extensions/${{ matrix.extension }}/api
+        run: |
+          VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Push WASM OCI artifact
+        run: |
+          set -euo pipefail
+          WASM_FILE="$(find ./artifacts -name '*.wasm' -print -quit)"
+          if [ -z "${WASM_FILE}" ]; then
+            echo "No WASM artifact found in ./artifacts" >&2
+            exit 1
+          fi
+
+          IMAGE="ghcr.io/${{ github.repository_owner }}/extensions/${{ matrix.extension }}"
+          VERSION="${{ steps.version.outputs.version }}"
+
+          CONFIG_FILE="oci-config.json"
+          printf '{}' > "${CONFIG_FILE}"
+
+          oras push "${IMAGE}:${VERSION}" \
+            --artifact-type application/vnd.module.wasm.content.layer.v1+wasm \
+            --annotation org.opencontainers.image.title="${{ matrix.extension }}" \
+            --annotation org.opencontainers.image.version="${VERSION}" \
+            "${CONFIG_FILE}:application/vnd.oci.image.config.v1+json" \
+            "${WASM_FILE}:application/vnd.module.wasm.content.layer.v1+wasm"
+
+          oras tag "${IMAGE}:${VERSION}" latest
+
+      - name: Generate build summary
+        run: |
+          echo "### 🚀 Published Extension" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Extension:** ${{ matrix.extension }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Registry:** ghcr.io/${{ github.repository_owner }}/extensions/${{ matrix.extension }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Usage" >> $GITHUB_STEP_SUMMARY
+          echo '```ron' >> $GITHUB_STEP_SUMMARY
+          echo 'Config(' >> $GITHUB_STEP_SUMMARY
+          echo '    extensions: Extensions(' >> $GITHUB_STEP_SUMMARY
+          echo '        oci: [' >> $GITHUB_STEP_SUMMARY
+          echo '            OciExtension(' >> $GITHUB_STEP_SUMMARY
+          echo '                name: "${{ matrix.extension }}",' >> $GITHUB_STEP_SUMMARY
+          echo '                registry: "ghcr.io",' >> $GITHUB_STEP_SUMMARY
+          echo '                image: "${{ github.repository_owner }}/extensions/${{ matrix.extension }}",' >> $GITHUB_STEP_SUMMARY
+          echo '                reference: Tag("${{ steps.version.outputs.version }}"),' >> $GITHUB_STEP_SUMMARY
+          echo '            ),' >> $GITHUB_STEP_SUMMARY
+          echo '        ],' >> $GITHUB_STEP_SUMMARY
+          echo '    ),' >> $GITHUB_STEP_SUMMARY
+          echo ')' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

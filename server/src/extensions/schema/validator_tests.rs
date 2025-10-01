@@ -61,10 +61,12 @@ fn test_ensure_unique_field_names_duplicate() {
 
     let result = ensure_unique_field_names(&fields, "test_extension", "TestObject");
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("Duplicate field name"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Duplicate field name")
+    );
 }
 
 #[test]
@@ -169,7 +171,11 @@ fn test_type_ref_to_sdl() {
     // NonNull List of NonNull
     let complex = TypeRef {
         root: "ID".to_string(),
-        modifiers: vec![TypeModifier::NonNull, TypeModifier::ListType, TypeModifier::NonNull],
+        modifiers: vec![
+            TypeModifier::NonNull,
+            TypeModifier::ListType,
+            TypeModifier::NonNull,
+        ],
     };
     assert_eq!(complex.to_sdl(), "[ID!]!");
 }
@@ -216,9 +222,9 @@ fn test_field_with_arguments() {
 fn test_multiple_types_in_fragment() {
     let mut fragment = SchemaFragment::default();
 
-    fragment.types.push(SchemaType::Scalar(ScalarType {
-        description: None,
-    }));
+    fragment
+        .types
+        .push(SchemaType::Scalar(ScalarType { description: None }));
 
     fragment.types.push(SchemaType::Enum(EnumType {
         description: None,
@@ -236,22 +242,23 @@ fn test_multiple_types_in_fragment() {
 
     fragment.types.push(SchemaType::Object(ObjectType {
         description: None,
-        fields: vec![
-            FieldDefinition {
-                name: "status".to_string(),
-                description: None,
-                ty: TypeRef {
-                    root: "Status".to_string(),
-                    modifiers: vec![],
-                },
-                args: vec![],
+        fields: vec![FieldDefinition {
+            name: "status".to_string(),
+            description: None,
+            ty: TypeRef {
+                root: "Status".to_string(),
+                modifiers: vec![],
             },
-        ],
+            args: vec![],
+        }],
         interfaces: vec![],
     }));
 
     // Provide pre-generated federation SDL (as extensions do in practice)
-    fragment.federation_sdl = Some("enum Status {\n  ACTIVE\n  INACTIVE\n}\n\ntype StatusHolder {\n  status: Status\n}".to_string());
+    fragment.federation_sdl = Some(
+        "enum Status {\n  ACTIVE\n  INACTIVE\n}\n\ntype StatusHolder {\n  status: Status\n}"
+            .to_string(),
+    );
 
     let sdl = fragment.to_sdl();
     // Should have multiple types separated by newlines
@@ -333,7 +340,11 @@ fn test_input_object_type() {
 fn test_union_type() {
     let union = UnionType {
         description: Some("A union of types".to_string()),
-        types: vec!["TypeA".to_string(), "TypeB".to_string(), "TypeC".to_string()],
+        types: vec![
+            "TypeA".to_string(),
+            "TypeB".to_string(),
+            "TypeC".to_string(),
+        ],
     };
 
     assert_eq!(union.types.len(), 3);
@@ -346,17 +357,15 @@ fn test_union_type() {
 fn test_object_with_interfaces() {
     let object = ObjectType {
         description: None,
-        fields: vec![
-            FieldDefinition {
-                name: "id".to_string(),
-                description: None,
-                ty: TypeRef {
-                    root: "ID".to_string(),
-                    modifiers: vec![TypeModifier::NonNull],
-                },
-                args: vec![],
+        fields: vec![FieldDefinition {
+            name: "id".to_string(),
+            description: None,
+            ty: TypeRef {
+                root: "ID".to_string(),
+                modifiers: vec![TypeModifier::NonNull],
             },
-        ],
+            args: vec![],
+        }],
         interfaces: vec!["Node".to_string(), "Entity".to_string()],
     };
 
@@ -369,17 +378,15 @@ fn test_object_with_interfaces() {
 fn test_interface_type() {
     let interface = InterfaceType {
         description: Some("Base interface".to_string()),
-        fields: vec![
-            FieldDefinition {
-                name: "id".to_string(),
-                description: None,
-                ty: TypeRef {
-                    root: "ID".to_string(),
-                    modifiers: vec![TypeModifier::NonNull],
-                },
-                args: vec![],
+        fields: vec![FieldDefinition {
+            name: "id".to_string(),
+            description: None,
+            ty: TypeRef {
+                root: "ID".to_string(),
+                modifiers: vec![TypeModifier::NonNull],
             },
-        ],
+            args: vec![],
+        }],
     };
 
     assert_eq!(interface.fields.len(), 1);

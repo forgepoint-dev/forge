@@ -5,9 +5,9 @@
 
 use super::cache::{CacheMetadata, ExtensionCache, compute_sha256};
 use anyhow::{Context, Result};
+use oci_distribution::Reference;
 use oci_distribution::client::{Client, ClientConfig, ClientProtocol};
 use oci_distribution::secrets::RegistryAuth;
-use oci_distribution::Reference;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
@@ -30,11 +30,7 @@ impl OciExtensionFetcher {
     const RETRY_BASE_DELAY_MS: u64 = 1000;
 
     /// Create a new OCI extension fetcher
-    pub fn new(
-        cache_dir: PathBuf,
-        offline_mode: bool,
-        verify_checksums: bool,
-    ) -> Result<Self> {
+    pub fn new(cache_dir: PathBuf, offline_mode: bool, verify_checksums: bool) -> Result<Self> {
         let config = ClientConfig {
             protocol: ClientProtocol::Https,
             ..Default::default()
@@ -105,7 +101,12 @@ impl OciExtensionFetcher {
         }
 
         // Fetch from registry with timeout and retry logic
-        tracing::info!("Fetching {}/{}:{} from OCI registry", registry, image, reference);
+        tracing::info!(
+            "Fetching {}/{}:{} from OCI registry",
+            registry,
+            image,
+            reference
+        );
         let (wasm_data, content_digest) = self
             .fetch_with_retry(registry, image, reference, auth)
             .await?;
@@ -198,7 +199,10 @@ impl OciExtensionFetcher {
 
         // All retries exhausted
         Err(last_error.unwrap_or_else(|| {
-            anyhow::anyhow!("Failed to fetch OCI extension after {} attempts", Self::MAX_RETRIES)
+            anyhow::anyhow!(
+                "Failed to fetch OCI extension after {} attempts",
+                Self::MAX_RETRIES
+            )
         }))
     }
 
@@ -296,12 +300,7 @@ mod tests {
     #[test]
     fn test_validate_wasm_valid() {
         let temp_dir = TempDir::new().unwrap();
-        let fetcher = OciExtensionFetcher::new(
-            temp_dir.path().join("cache"),
-            false,
-            true,
-        )
-        .unwrap();
+        let fetcher = OciExtensionFetcher::new(temp_dir.path().join("cache"), false, true).unwrap();
 
         // Valid WASM module
         let valid_wasm = b"\0asm\x01\x00\x00\x00";
@@ -311,12 +310,7 @@ mod tests {
     #[test]
     fn test_validate_wasm_invalid_magic() {
         let temp_dir = TempDir::new().unwrap();
-        let fetcher = OciExtensionFetcher::new(
-            temp_dir.path().join("cache"),
-            false,
-            true,
-        )
-        .unwrap();
+        let fetcher = OciExtensionFetcher::new(temp_dir.path().join("cache"), false, true).unwrap();
 
         // Invalid magic number
         let invalid_wasm = b"notw\x01\x00\x00\x00";
@@ -326,12 +320,7 @@ mod tests {
     #[test]
     fn test_validate_wasm_too_small() {
         let temp_dir = TempDir::new().unwrap();
-        let fetcher = OciExtensionFetcher::new(
-            temp_dir.path().join("cache"),
-            false,
-            true,
-        )
-        .unwrap();
+        let fetcher = OciExtensionFetcher::new(temp_dir.path().join("cache"), false, true).unwrap();
 
         // Too small
         let too_small = b"\0as";
@@ -351,11 +340,7 @@ mod tests {
         )
         .unwrap();
 
-        let cache_key = ExtensionCache::compute_cache_key(
-            "ghcr.io",
-            "test/extension",
-            "v1.0.0",
-        );
+        let cache_key = ExtensionCache::compute_cache_key("ghcr.io", "test/extension", "v1.0.0");
 
         let wasm_data = b"\0asm\x01\x00\x00\x00";
         let metadata = CacheMetadata {
@@ -368,12 +353,14 @@ mod tests {
             sha256: compute_sha256(wasm_data),
         };
 
-        fetcher.cache().store(&cache_key, wasm_data, metadata).unwrap();
+        fetcher
+            .cache()
+            .store(&cache_key, wasm_data, metadata)
+            .unwrap();
 
         // Now create offline fetcher
         let offline_fetcher = OciExtensionFetcher::new(
-            cache_dir,
-            true, // Offline mode
+            cache_dir, true, // Offline mode
             true,
         )
         .unwrap();

@@ -5,16 +5,18 @@ mod extensions;
 mod graphql;
 mod group;
 mod repository;
+mod router;
 mod supervisor;
 mod validation;
 
 use anyhow::Context as _;
-use supervisor::Supervisor;
 use std::path::PathBuf;
+use std::sync::Arc;
+use supervisor::Supervisor;
 
-use api::{run_api};
-use graphql::build_schema;
+use api::run_api;
 use repository::RepositoryStorage;
+use router::RouterState;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -49,23 +51,10 @@ async fn main() -> anyhow::Result<()> {
 
     let storage = RepositoryStorage::new(repos_root, remote_cache_root);
 
-    // Handle extensions directory
-    let extensions_dir = if std::env::var("FORGE_IN_MEMORY_DB").unwrap_or_default() == "true" {
-        // In memory mode, look for extensions relative to current directory
-        std::env::var("FORGE_EXTENSIONS_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("extensions_dir"))
-    } else {
-        // Normal mode
-        std::env::var("FORGE_EXTENSIONS_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| {
-                db_root_path
-                    .parent()
-                    .unwrap_or_else(|| std::path::Path::new("."))
-                    .join("server/extensions")
-            })
-    };
+    // Handle extensions directory - use ./extensions relative to server binary
+    let extensions_dir = std::env::var("FORGE_EXTENSIONS_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("./extensions"));
 
     let mut extension_manager =
         extensions::ExtensionManager::new(extensions_dir.clone(), db_root_path.clone());
@@ -74,7 +63,10 @@ async fn main() -> anyhow::Result<()> {
     match config::loader::load_with_discovery() {
         Ok(config) if !config.extensions.oci.is_empty() || !config.extensions.local.is_empty() => {
             tracing::info!("Loading extensions from configuration");
-            if let Err(e) = extension_manager.load_extensions_from_config(&config.extensions).await {
+            if let Err(e) = extension_manager
+                .load_extensions_from_config(&config.extensions)
+                .await
+            {
                 tracing::error!("Failed to load extensions from config: {}", e);
             }
         }
@@ -86,20 +78,28 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Err(e) => {
-            tracing::warn!("Failed to load config ({}), falling back to directory scan", e);
+            tracing::warn!(
+                "Failed to load config ({}), falling back to directory scan",
+                e
+            );
             if let Err(e) = extension_manager.load_extensions().await {
                 tracing::warn!("Failed to load extensions from directory: {}", e);
             }
         }
     }
 
-    // Create the GraphQL schema
-    let schema = build_schema(pool.clone(), storage.clone(), extension_manager);
+    let extension_manager = Arc::new(extension_manager);
+
+    // Initialise Hive Router state
+    let router_state = Arc::new(
+        RouterState::new(pool.clone(), storage.clone(), extension_manager.clone())
+            .context("Failed to initialise router state")?,
+    );
 
     let mut supervisor = Supervisor::new();
 
     supervisor.spawn("api", move |shutdown| async move {
-        run_api(schema, shutdown).await
+        run_api(router_state, shutdown).await
     });
 
     supervisor.run().await

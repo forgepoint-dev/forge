@@ -240,7 +240,10 @@ mod tests {
         };
 
         let creds = auth.resolve_credentials();
-        assert_eq!(creds, Some(("testuser".to_string(), "testtoken".to_string())));
+        assert_eq!(
+            creds,
+            Some(("testuser".to_string(), "testtoken".to_string()))
+        );
 
         // Clean up
         unsafe {

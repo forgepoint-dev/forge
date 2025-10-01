@@ -1,7 +1,7 @@
 //! WIT bindings implementation for extension host functions
 //!
 //! This module provides the host-side implementation of the WIT interface
-//! defined in wit/extension.wit. It uses wit-bindgen to generate bindings
+//! defined in packages/wit/extension.wit. It uses wit-bindgen to generate bindings
 //! and implements the host functions that extensions can import.
 
 use anyhow::Result;
@@ -17,7 +17,7 @@ use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiView};
 // Note: Using sync (not async) to avoid Send+Sync issues with WASI types in Store
 wasmtime::component::bindgen!({
     world: "extension",
-    path: "wit",
+    path: "../packages/wit",
     async: false,
 });
 
@@ -33,8 +33,10 @@ pub use self::Extension as WasmExtension;
 
 // Import types from generated guest interface modules
 use self::exports::forge::extension::extension_api::{
-    Config as ExtConfig, ResolveInfo as ExtResolveInfo,
-    ResolveResult as ExtResolveResult,
+    Config as ExtConfig, ContextScope as ExtContextScope, GlobalContext as ExtGlobalContext,
+    RepositoryContext as ExtRepositoryContext, RequestContext as ExtRequestContext,
+    ResolveInfo as ExtResolveInfo, ResolveResult as ExtResolveResult,
+    UserContext as ExtUserContext,
 };
 
 // For imports (host-*), we implement the Host traits
@@ -51,6 +53,74 @@ pub enum ResolveResult {
     Error(String),
 }
 
+/// The logical scope an extension resolver is executing within.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextScope {
+    Global,
+    Repository,
+    User,
+    RepositoryUser,
+}
+
+impl Default for ContextScope {
+    fn default() -> Self {
+        ContextScope::Global
+    }
+}
+
+/// Repository metadata exposed to extensions when a resolver operates on a repository.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RepositoryContext {
+    pub id: String,
+    pub slug: String,
+    pub group_id: Option<String>,
+    pub full_path: Option<String>,
+    pub is_remote: bool,
+    pub remote_url: Option<String>,
+}
+
+/// User metadata provided to extensions when a resolver executes on behalf of a user.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UserContext {
+    pub id: String,
+    pub username: String,
+    pub display_name: Option<String>,
+    pub email: Option<String>,
+}
+
+/// Global/environment metadata shared across requests.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GlobalContext {
+    pub installation_id: Option<String>,
+    pub environment: Option<String>,
+    #[serde(default)]
+    pub feature_flags: Vec<String>,
+}
+
+/// Structured request context delivered with every extension resolver invocation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestContext {
+    pub scope: ContextScope,
+    pub repository: Option<RepositoryContext>,
+    pub user: Option<UserContext>,
+    pub global: Option<GlobalContext>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra: Option<serde_json::Value>,
+}
+
+impl Default for RequestContext {
+    fn default() -> Self {
+        Self {
+            scope: ContextScope::Global,
+            repository: None,
+            user: None,
+            global: None,
+            extra: None,
+        }
+    }
+}
+
 /// Information needed to resolve a GraphQL field
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
@@ -58,7 +128,7 @@ pub struct ResolveInfo {
     pub field_name: String,
     pub parent_type: String,
     pub arguments: serde_json::Value,
-    pub context: serde_json::Value,
+    pub context: RequestContext,
     pub parent: Option<serde_json::Value>,
 }
 
@@ -105,7 +175,9 @@ impl ExtensionHost {
 
     /// Get database pool
     fn get_pool(&self) -> Result<SqlitePool> {
-        let pool_guard = self.db_pool.lock()
+        let pool_guard = self
+            .db_pool
+            .lock()
             .map_err(|e| anyhow::anyhow!("Failed to lock database pool: {}", e))?;
         pool_guard
             .as_ref()
@@ -186,11 +258,9 @@ fn wit_value_to_json(value: &WitRecordValue) -> serde_json::Value {
         WitRecordValue::Null => serde_json::Value::Null,
         WitRecordValue::Boolean(b) => serde_json::Value::Bool(*b),
         WitRecordValue::Integer(i) => serde_json::json!(i),
-        WitRecordValue::Float(f) => {
-            serde_json::Number::from_f64(*f)
-                .map(serde_json::Value::Number)
-                .unwrap_or(serde_json::Value::Null)
-        }
+        WitRecordValue::Float(f) => serde_json::Number::from_f64(*f)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
         WitRecordValue::Text(s) => serde_json::Value::String(s.clone()),
         WitRecordValue::Blob(b) => {
             // Convert blob to base64 string
@@ -202,13 +272,70 @@ fn wit_value_to_json(value: &WitRecordValue) -> serde_json::Value {
     }
 }
 
+fn to_wit_request_context(context: &RequestContext) -> Result<ExtRequestContext> {
+    let repository = context
+        .repository
+        .as_ref()
+        .map(|repo| to_wit_repository_context(repo));
+    let user = context.user.as_ref().map(|user| to_wit_user_context(user));
+    let global = context
+        .global
+        .as_ref()
+        .map(|global| to_wit_global_context(global));
+    let extra_json = match context.extra.as_ref() {
+        Some(extra) => Some(serde_json::to_string(extra)?),
+        None => None,
+    };
+
+    Ok(ExtRequestContext {
+        scope: to_wit_context_scope(context.scope),
+        repository,
+        user,
+        global,
+        extra_json,
+    })
+}
+
+fn to_wit_context_scope(scope: ContextScope) -> ExtContextScope {
+    match scope {
+        ContextScope::Global => ExtContextScope::Global,
+        ContextScope::Repository => ExtContextScope::Repository,
+        ContextScope::User => ExtContextScope::User,
+        ContextScope::RepositoryUser => ExtContextScope::RepositoryUser,
+    }
+}
+
+fn to_wit_repository_context(context: &RepositoryContext) -> ExtRepositoryContext {
+    ExtRepositoryContext {
+        id: context.id.clone(),
+        slug: context.slug.clone(),
+        group_id: context.group_id.clone(),
+        full_path: context.full_path.clone(),
+        is_remote: context.is_remote,
+        remote_url: context.remote_url.clone(),
+    }
+}
+
+fn to_wit_user_context(context: &UserContext) -> ExtUserContext {
+    ExtUserContext {
+        id: context.id.clone(),
+        username: context.username.clone(),
+        display_name: context.display_name.clone(),
+        email: context.email.clone(),
+    }
+}
+
+fn to_wit_global_context(context: &GlobalContext) -> ExtGlobalContext {
+    ExtGlobalContext {
+        installation_id: context.installation_id.clone(),
+        environment: context.environment.clone(),
+        feature_flags: context.feature_flags.clone(),
+    }
+}
+
 // Implement the host-database interface
 impl self::forge::extension::host_database::Host for ExtensionState {
-    fn query(
-        &mut self,
-        sql: String,
-        params: Vec<WitRecordValue>,
-    ) -> QueryResult {
+    fn query(&mut self, sql: String, params: Vec<WitRecordValue>) -> QueryResult {
         // NOTE: We use block_on here because WASM bindings are synchronous (async: false)
         // This is a known trade-off: sync WASM bindings avoid Send/Sync issues with WASI types,
         // but require blocking on async database operations.
@@ -253,20 +380,17 @@ impl self::forge::extension::host_database::Host for ExtensionState {
             let mut row_values = Vec::new();
             for (i, _column) in row.columns().iter().enumerate() {
                 let value: WitRecordValue = if let Ok(v) = row.try_get::<Option<String>, _>(i) {
-                    v.map(WitRecordValue::Text)
-                        .unwrap_or(WitRecordValue::Null)
+                    v.map(WitRecordValue::Text).unwrap_or(WitRecordValue::Null)
                 } else if let Ok(v) = row.try_get::<Option<i64>, _>(i) {
                     v.map(WitRecordValue::Integer)
                         .unwrap_or(WitRecordValue::Null)
                 } else if let Ok(v) = row.try_get::<Option<f64>, _>(i) {
-                    v.map(WitRecordValue::Float)
-                        .unwrap_or(WitRecordValue::Null)
+                    v.map(WitRecordValue::Float).unwrap_or(WitRecordValue::Null)
                 } else if let Ok(v) = row.try_get::<Option<bool>, _>(i) {
                     v.map(WitRecordValue::Boolean)
                         .unwrap_or(WitRecordValue::Null)
                 } else if let Ok(v) = row.try_get::<Option<Vec<u8>>, _>(i) {
-                    v.map(WitRecordValue::Blob)
-                        .unwrap_or(WitRecordValue::Null)
+                    v.map(WitRecordValue::Blob).unwrap_or(WitRecordValue::Null)
                 } else {
                     WitRecordValue::Null
                 };
@@ -278,11 +402,7 @@ impl self::forge::extension::host_database::Host for ExtensionState {
         QueryResult::Success(result_rows)
     }
 
-    fn execute(
-        &mut self,
-        sql: String,
-        params: Vec<WitRecordValue>,
-    ) -> ExecResult {
+    fn execute(&mut self, sql: String, params: Vec<WitRecordValue>) -> ExecResult {
         let pool = match self.host.get_pool() {
             Ok(p) => p,
             Err(e) => return ExecResult::Error(e.to_string()),
@@ -367,14 +487,15 @@ impl ComponentExtension {
         let engine = Engine::new(&config)?;
 
         // Create WASI context - minimal configuration
-        let wasi = WasiCtxBuilder::new()
-            .build();
+        let wasi = WasiCtxBuilder::new().build();
 
         // Create host with pre-initialized database pool
         let host = ExtensionHost::new(name, extension_dir.to_path_buf());
         // Store the pool
         {
-            let mut pool_guard = host.db_pool.lock()
+            let mut pool_guard = host
+                .db_pool
+                .lock()
                 .map_err(|e| anyhow::anyhow!("Failed to lock database pool: {}", e))?;
             *pool_guard = Some(db_pool);
         }
@@ -454,12 +575,20 @@ impl ComponentExtension {
     /// Resolve a GraphQL field
     #[allow(dead_code)]
     pub fn resolve_field(&mut self, info: ResolveInfo) -> Result<ResolveResult> {
+        let ResolveInfo {
+            field_name,
+            parent_type,
+            arguments,
+            context,
+            parent,
+        } = info;
+
         let wit_info = ExtResolveInfo {
-            field_name: info.field_name,
-            parent_type: info.parent_type,
-            arguments: serde_json::to_string(&info.arguments)?,
-            context: serde_json::to_string(&info.context)?,
-            parent: info.parent.map(|p| serde_json::to_string(&p)).transpose()?,
+            field_name,
+            parent_type,
+            arguments: serde_json::to_string(&arguments)?,
+            context: to_wit_request_context(&context)?,
+            parent: parent.map(|p| serde_json::to_string(&p)).transpose()?,
         };
 
         let result = self

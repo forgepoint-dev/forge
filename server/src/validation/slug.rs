@@ -1,6 +1,4 @@
-use crate::graphql::errors::bad_user_input;
-
-pub fn validate_slug(slug: &str) -> async_graphql::Result<()> {
+pub fn validate_slug(slug: &str) -> anyhow::Result<()> {
     let is_valid = !slug.is_empty()
         && !slug.starts_with('-')
         && !slug.ends_with('-')
@@ -12,6 +10,6 @@ pub fn validate_slug(slug: &str) -> async_graphql::Result<()> {
     if is_valid {
         Ok(())
     } else {
-        Err(bad_user_input("slug must be lowercase kebab-case"))
+        Err(anyhow::anyhow!("slug must be lowercase kebab-case"))
     }
 }

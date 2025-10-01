@@ -31,10 +31,10 @@ pub struct ExtensionLimits {
 impl Default for ExtensionLimits {
     fn default() -> Self {
         Self {
-            max_memory_bytes: 16 * 1024 * 1024,  // 16MB
-            max_module_bytes: 10 * 1024 * 1024,  // 10MB
-            max_stack_bytes: 512 * 1024,         // 512KB
-            max_fuel: Some(1_000_000_000),       // 1 billion units
+            max_memory_bytes: 16 * 1024 * 1024, // 16MB
+            max_module_bytes: 10 * 1024 * 1024, // 10MB
+            max_stack_bytes: 512 * 1024,        // 512KB
+            max_fuel: Some(1_000_000_000),      // 1 billion units
             operation_timeout: Duration::from_secs(5),
             max_concurrent_ops: 10,
         }
@@ -46,10 +46,10 @@ impl ExtensionLimits {
     #[allow(dead_code)] // Will be used when extension system is fully integrated
     pub fn development() -> Self {
         Self {
-            max_memory_bytes: 32 * 1024 * 1024,  // 32MB
-            max_module_bytes: 20 * 1024 * 1024,  // 20MB
-            max_stack_bytes: 1024 * 1024,        // 1MB
-            max_fuel: None,                      // No fuel limit
+            max_memory_bytes: 32 * 1024 * 1024, // 32MB
+            max_module_bytes: 20 * 1024 * 1024, // 20MB
+            max_stack_bytes: 1024 * 1024,       // 1MB
+            max_fuel: None,                     // No fuel limit
             operation_timeout: Duration::from_secs(30),
             max_concurrent_ops: 50,
         }
@@ -174,7 +174,12 @@ pub async fn load_wasm_module_with_limits(
     }
 
     tracing::info!("Successfully loaded WASM module: {:?}", wasm_path);
-    Ok(ExtensionInstance::new(store, instance, engine, limits.clone()))
+    Ok(ExtensionInstance::new(
+        store,
+        instance,
+        engine,
+        limits.clone(),
+    ))
 }
 
 /// Validate that the module doesn't import dangerous host functions

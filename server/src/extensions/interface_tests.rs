@@ -73,7 +73,12 @@ async fn test_concurrent_operation_limit_enforced() {
     // This should fail because we're at the limit
     let result = ext.resolve_field("test", "{}").await;
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("exceeded concurrent operation limit"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("exceeded concurrent operation limit")
+    );
 }
 
 #[test]

@@ -1,0 +1,158 @@
+// WIT (WebAssembly Interface Types) definition for GraphQL extensions
+package forge:extension@0.2.0;
+
+// The main extension world that defines what the extension can import and export
+world extension {
+    // Imports from the host
+    import host-log;
+    import host-database;
+
+    // Exports that the extension must provide
+    export extension-api;
+}
+
+// Logging interface provided by the host
+interface host-log {
+    enum log-level {
+        trace,
+        debug,
+        info,
+        warn,
+        error,
+    }
+
+    // Log a message at the specified level
+    log: func(level: log-level, message: string);
+}
+
+// Database interface provided by the host
+interface host-database {
+    // Record value can be various types
+    variant record-value {
+        null,
+        boolean(bool),
+        integer(s64),
+        float(f64),
+        text(string),
+        blob(list<u8>),
+    }
+
+    // A single row from a query result
+    record query-row {
+        values: list<record-value>,
+    }
+
+    // Result types for database operations
+    variant query-result {
+        success(list<query-row>),
+        error(string),
+    }
+
+    variant exec-result {
+        success(exec-info),
+        error(string),
+    }
+
+    record exec-info {
+        rows-affected: u64,
+        last-insert-id: option<u64>,
+    }
+
+    // Execute a query that returns results
+    query: func(sql: string, params: list<record-value>) -> query-result;
+
+    // Execute a statement that doesn't return results
+    execute: func(sql: string, params: list<record-value>) -> exec-result;
+
+    // Run migrations (SQL statements separated by semicolons)
+    migrate: func(migrations: string) -> result<_, string>;
+}
+
+// The main API that extensions must implement
+interface extension-api {
+    // Configuration passed to the extension
+    record config {
+        name: string,
+        version: string,
+        database-path: string,
+        custom-config: option<string>,
+    }
+
+    // Context scope for the current request
+    enum context-scope {
+        global,
+        repository,
+        user,
+        repository-user,
+    }
+
+    // Repository metadata provided when the request is scoped to a repository
+    record repository-context {
+        id: string,
+        slug: string,
+        group-id: option<string>,
+        full-path: option<string>,
+        is-remote: bool,
+        remote-url: option<string>,
+    }
+
+    // User metadata provided when the request is associated with a signed-in user
+    record user-context {
+        id: string,
+        username: string,
+        display-name: option<string>,
+        email: option<string>,
+    }
+
+    // Global/environment level metadata shared across requests
+    record global-context {
+        installation-id: option<string>,
+        environment: option<string>,
+        feature-flags: list<string>,
+    }
+
+    // Structured request context supplied to extensions for each resolver invocation
+    record request-context {
+        scope: context-scope,
+        repository: option<repository-context>,
+        user: option<user-context>,
+        global: option<global-context>,
+        extra-json: option<string>,
+    }
+
+    // GraphQL field resolution
+    record resolve-info {
+        field-name: string,
+        parent-type: string,
+        arguments: string, // JSON string
+        context: request-context,
+        parent: option<string>, // JSON string of parent object
+    }
+
+    variant resolve-result {
+        success(string), // JSON string
+        error(string),
+    }
+
+    // Extension information
+    record extension-info {
+        name: string,
+        version: string,
+        capabilities: list<string>,
+    }
+
+    // Initialize the extension
+    init: func(config: config) -> result<_, string>;
+
+    // Get extension information
+    get-info: func() -> extension-info;
+
+    // Get the GraphQL schema fragment (SDL format)
+    get-schema: func() -> string;
+
+    // Resolve a GraphQL field
+    resolve-field: func(info: resolve-info) -> resolve-result;
+
+    // Clean shutdown
+    shutdown: func();
+}

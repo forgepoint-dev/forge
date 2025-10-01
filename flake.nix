@@ -58,18 +58,23 @@
                 "rustc"
                 "rustfmt"
               ];
+              # WASM targets for building extensions (extensions/*/api)
+              # Extensions compile to wasm32-wasip1 for WASI Preview 1 support
               targets = [
                 "wasm32-wasip1"
                 "wasm32-wasip2"
               ];
 
-              mold.enable = true;
+              # Note: mold is disabled because it's incompatible with WebAssembly targets
+              # WASM uses rust-lld which doesn't support the -fuse-ld=mold flag
+              mold.enable = false;
             };
 
             packages = [
               pkgs.openssl.dev
-              pkgs.cargo-component
-              pkgs.wasm-tools
+              # WASM tooling for extension development
+              pkgs.cargo-component # Component model tooling
+              pkgs.wasm-tools # WASM validation and inspection
             ];
           };
 

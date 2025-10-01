@@ -2,6 +2,15 @@
 import { defineConfig } from "astro/config";
 import vue from "@astrojs/vue";
 import tailwind from "@astrojs/tailwind";
+import { createSlotRegistry, createSlotPlugin } from "./src/lib/slot-plugin.ts";
+// Import issues integration from workspace (for local development)
+// In production, use: import issuesIntegration from '@forgepoint/astro-integration-issues';
+import issuesIntegration from "../../extensions/issues/ui/src/index.ts";
+
+const slotRegistry = createSlotRegistry();
+const slotPlugin = createSlotPlugin(slotRegistry);
+
+export { slotRegistry };
 
 // https://astro.build/config
 export default defineConfig({
@@ -11,5 +20,10 @@ export default defineConfig({
 			// We manage base styles via shadcn-style CSS variables
 			applyBaseStyles: false,
 		}),
+		// Enable Issues extension with slot registration
+		issuesIntegration({ slotRegistry }),
 	],
+	vite: {
+		plugins: [slotPlugin],
+	},
 });

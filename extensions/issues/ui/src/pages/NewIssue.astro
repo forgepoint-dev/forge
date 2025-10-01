@@ -1,0 +1,40 @@
+---
+import NewIssueForm from '../components/NewIssueForm.vue';
+
+const repositoryId = Astro.url.searchParams.get('repositoryId') ?? '';
+const repositoryPath = Astro.url.searchParams.get('repositoryPath') ?? '';
+const hasRepositoryId = repositoryId.length > 0;
+const resolvedRepositoryId = hasRepositoryId ? repositoryId : null;
+const resolvedRepositoryPath = repositoryPath.length > 0 ? repositoryPath : null;
+---
+
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width" />
+		<title>New Issue - Forge</title>
+	</head>
+<body class="min-h-screen bg-background text-foreground">
+	<div class="mx-auto max-w-3xl px-4 py-10 space-y-6">
+		<header class="space-y-2">
+			<h1 class="text-3xl font-bold">Create a New Issue</h1>
+			<p class="text-sm text-muted-foreground">
+				Capture bugs, feature requests, or follow-ups directly from the repository context.
+			</p>
+		</header>
+
+		<div class="rounded-lg border border-border bg-card p-6 shadow-sm space-y-4">
+			{!hasRepositoryId && (
+				<div class="rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
+					We couldn't determine the repository automatically. Provide the full repository path below to continue.
+				</div>
+			)}
+			<NewIssueForm
+				client:load
+				repository-id={resolvedRepositoryId}
+				repository-path={resolvedRepositoryPath}
+			/>
+		</div>
+	</div>
+</body>
+</html>

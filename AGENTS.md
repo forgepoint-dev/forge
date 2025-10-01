@@ -25,6 +25,38 @@ You can modify these steps as our stack evolves. Keep the job name `copilot-setu
 
 For more details on how the environment hook works, see the GitHub documentation: [Customizing the development environment for GitHub Copilot coding agent](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/coding-agent/customize-the-agent-environment).
 
+## Repository layout
+
+- Feature work now lives under `extensions/<feature>/` with three sibling folders:
+  - `api/` – Rust crate compiled to WebAssembly (`wasm32-wasip1`).
+  - `shared/` – Canonical GraphQL schema, fixtures, and other cross-cutting assets.
+  - `ui/` – Astro/Vue integration published as `@forgepoint/astro-integration-<feature>`.
+- The issues feature is the canonical example: see `extensions/issues/{api,shared,ui}`.
+- Legacy `packages/extensions/*` and `packages/integrations/*` paths are removed; update prompts and scripts accordingly.
+
+## Running commands with Nix
+
+GitHub runners and local developers should execute Rust, Bun, or other toolchain commands inside the Nix shell so dependencies (linker, Bun 1.1.30, etc.) are present. Wrap each command with `nix develop --impure -c` from the repository root or feature subdirectory, for example:
+
+```bash
+# Build the WASM crate
+nix develop --impure -c cargo build --target wasm32-wasip1 --release
+
+# Run Rust tests
+nix develop --impure -c cargo test
+
+# Install JS deps or run tests for a UI package
+nix develop --impure -c bun install
+nix develop --impure -c bun test
+
+# Invoke project justfile recipes
+nix develop --impure -c just install-local
+```
+
+Always include the full command after `-c`; the shell will provision compilers and environment variables needed for deterministic builds.
+
+> **Non-interactive Vitest:** Bun’s `vitest` runner launches an interactive UI by default. Run it as shown above (`nix develop --impure -c bun test`) or add `--runInBand`/`--reporter=basic` so automated sessions don’t hang waiting for input.
+
 ## Providing secrets and configuration
 
 Some tooling requires credentials or configuration values. Store these as GitHub Actions variables or secrets in the `copilot` environment:

@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = [
+    "server",
+    "extensions/issues/api",
+]
+
+[patch.crates-io]
+hive-router-plan-executor = { git = "https://github.com/rawkode/router.git", branch = "fix/variable-propagation", package = "hive-router-plan-executor" }
+hive-router-query-planner = { git = "https://github.com/rawkode/router.git", branch = "fix/variable-propagation", package = "hive-router-query-planner" }
+hive-router-config = { git = "https://github.com/rawkode/router.git", branch = "fix/variable-propagation", package = "hive-router-config" }
