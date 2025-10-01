@@ -33,7 +33,10 @@ pub use self::Extension as WasmExtension;
 
 // Import types from generated guest interface modules
 use self::exports::forge::extension::extension_api::{
-    Config as ExtConfig, ResolveInfo as ExtResolveInfo, ResolveResult as ExtResolveResult,
+    Config as ExtConfig, ContextScope as ExtContextScope, GlobalContext as ExtGlobalContext,
+    RepositoryContext as ExtRepositoryContext, RequestContext as ExtRequestContext,
+    ResolveInfo as ExtResolveInfo, ResolveResult as ExtResolveResult,
+    UserContext as ExtUserContext,
 };
 
 // For imports (host-*), we implement the Host traits
@@ -50,6 +53,74 @@ pub enum ResolveResult {
     Error(String),
 }
 
+/// The logical scope an extension resolver is executing within.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextScope {
+    Global,
+    Repository,
+    User,
+    RepositoryUser,
+}
+
+impl Default for ContextScope {
+    fn default() -> Self {
+        ContextScope::Global
+    }
+}
+
+/// Repository metadata exposed to extensions when a resolver operates on a repository.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RepositoryContext {
+    pub id: String,
+    pub slug: String,
+    pub group_id: Option<String>,
+    pub full_path: Option<String>,
+    pub is_remote: bool,
+    pub remote_url: Option<String>,
+}
+
+/// User metadata provided to extensions when a resolver executes on behalf of a user.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UserContext {
+    pub id: String,
+    pub username: String,
+    pub display_name: Option<String>,
+    pub email: Option<String>,
+}
+
+/// Global/environment metadata shared across requests.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GlobalContext {
+    pub installation_id: Option<String>,
+    pub environment: Option<String>,
+    #[serde(default)]
+    pub feature_flags: Vec<String>,
+}
+
+/// Structured request context delivered with every extension resolver invocation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestContext {
+    pub scope: ContextScope,
+    pub repository: Option<RepositoryContext>,
+    pub user: Option<UserContext>,
+    pub global: Option<GlobalContext>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra: Option<serde_json::Value>,
+}
+
+impl Default for RequestContext {
+    fn default() -> Self {
+        Self {
+            scope: ContextScope::Global,
+            repository: None,
+            user: None,
+            global: None,
+            extra: None,
+        }
+    }
+}
+
 /// Information needed to resolve a GraphQL field
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
@@ -57,7 +128,7 @@ pub struct ResolveInfo {
     pub field_name: String,
     pub parent_type: String,
     pub arguments: serde_json::Value,
-    pub context: serde_json::Value,
+    pub context: RequestContext,
     pub parent: Option<serde_json::Value>,
 }
 
@@ -198,6 +269,67 @@ fn wit_value_to_json(value: &WitRecordValue) -> serde_json::Value {
                 b,
             ))
         }
+    }
+}
+
+fn to_wit_request_context(context: &RequestContext) -> Result<ExtRequestContext> {
+    let repository = context
+        .repository
+        .as_ref()
+        .map(|repo| to_wit_repository_context(repo));
+    let user = context.user.as_ref().map(|user| to_wit_user_context(user));
+    let global = context
+        .global
+        .as_ref()
+        .map(|global| to_wit_global_context(global));
+    let extra_json = match context.extra.as_ref() {
+        Some(extra) => Some(serde_json::to_string(extra)?),
+        None => None,
+    };
+
+    Ok(ExtRequestContext {
+        scope: to_wit_context_scope(context.scope),
+        repository,
+        user,
+        global,
+        extra_json,
+    })
+}
+
+fn to_wit_context_scope(scope: ContextScope) -> ExtContextScope {
+    match scope {
+        ContextScope::Global => ExtContextScope::Global,
+        ContextScope::Repository => ExtContextScope::Repository,
+        ContextScope::User => ExtContextScope::User,
+        ContextScope::RepositoryUser => ExtContextScope::RepositoryUser,
+    }
+}
+
+fn to_wit_repository_context(context: &RepositoryContext) -> ExtRepositoryContext {
+    ExtRepositoryContext {
+        id: context.id.clone(),
+        slug: context.slug.clone(),
+        group_id: context.group_id.clone(),
+        full_path: context.full_path.clone(),
+        is_remote: context.is_remote,
+        remote_url: context.remote_url.clone(),
+    }
+}
+
+fn to_wit_user_context(context: &UserContext) -> ExtUserContext {
+    ExtUserContext {
+        id: context.id.clone(),
+        username: context.username.clone(),
+        display_name: context.display_name.clone(),
+        email: context.email.clone(),
+    }
+}
+
+fn to_wit_global_context(context: &GlobalContext) -> ExtGlobalContext {
+    ExtGlobalContext {
+        installation_id: context.installation_id.clone(),
+        environment: context.environment.clone(),
+        feature_flags: context.feature_flags.clone(),
     }
 }
 
@@ -443,12 +575,20 @@ impl ComponentExtension {
     /// Resolve a GraphQL field
     #[allow(dead_code)]
     pub fn resolve_field(&mut self, info: ResolveInfo) -> Result<ResolveResult> {
+        let ResolveInfo {
+            field_name,
+            parent_type,
+            arguments,
+            context,
+            parent,
+        } = info;
+
         let wit_info = ExtResolveInfo {
-            field_name: info.field_name,
-            parent_type: info.parent_type,
-            arguments: serde_json::to_string(&info.arguments)?,
-            context: serde_json::to_string(&info.context)?,
-            parent: info.parent.map(|p| serde_json::to_string(&p)).transpose()?,
+            field_name,
+            parent_type,
+            arguments: serde_json::to_string(&arguments)?,
+            context: to_wit_request_context(&context)?,
+            parent: parent.map(|p| serde_json::to_string(&p)).transpose()?,
         };
 
         let result = self

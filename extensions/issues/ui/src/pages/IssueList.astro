@@ -1,5 +1,7 @@
 ---
 import IssueList from '../components/IssueList.vue';
+
+const repositoryId = Astro.url.searchParams.get('repositoryId') ?? undefined;
 ---
 
 <html lang="en">
@@ -10,7 +12,7 @@ import IssueList from '../components/IssueList.vue';
 	</head>
 	<body>
 		<div class="container mx-auto px-4 py-8">
-			<IssueList client:load />
+			<IssueList client:load repository-id={repositoryId} />
 		</div>
 	</body>
 </html>

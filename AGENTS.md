@@ -55,6 +55,8 @@ nix develop --impure -c just install-local
 
 Always include the full command after `-c`; the shell will provision compilers and environment variables needed for deterministic builds.
 
+> **Non-interactive Vitest:** Bun’s `vitest` runner launches an interactive UI by default. Run it as shown above (`nix develop --impure -c bun test`) or add `--runInBand`/`--reporter=basic` so automated sessions don’t hang waiting for input.
+
 ## Providing secrets and configuration
 
 Some tooling requires credentials or configuration values. Store these as GitHub Actions variables or secrets in the `copilot` environment:

@@ -1,21 +1,54 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
-import { getAllIssues, type Issue } from '../lib/client';
+import { ref, onMounted, watch } from 'vue';
+import { getIssuesForRepository, type Issue } from '../lib/client';
+
+const props = defineProps<{
+	repositoryId?: string;
+}>();
 
 const issues = ref<Issue[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
 
-onMounted(async () => {
+async function fetchIssues(repositoryId: string) {
+	loading.value = true;
+	error.value = null;
+
 	try {
-		const response = await getAllIssues();
-		issues.value = response.getAllIssues;
+		const response = await getIssuesForRepository(repositoryId);
+		issues.value = response.getIssuesForRepository;
 	} catch (e) {
 		error.value = e instanceof Error ? e.message : 'Failed to load issues';
+		issues.value = [];
 	} finally {
 		loading.value = false;
 	}
+}
+
+function resetState() {
+	issues.value = [];
+	loading.value = false;
+	error.value = null;
+}
+
+onMounted(() => {
+	if (props.repositoryId) {
+		fetchIssues(props.repositoryId);
+	} else {
+		resetState();
+	}
 });
+
+watch(
+	() => props.repositoryId,
+	(newRepositoryId) => {
+		if (newRepositoryId) {
+			fetchIssues(newRepositoryId);
+		} else {
+			resetState();
+		}
+	}
+);
 </script>
 
 <template>
@@ -28,6 +61,10 @@ onMounted(async () => {
 		
 		<div v-else-if="error" class="text-red-600 bg-red-50 p-4 rounded">
 			{{ error }}
+		</div>
+
+		<div v-else-if="!props.repositoryId" class="text-gray-600">
+			Select a repository to view issues.
 		</div>
 		
 		<div v-else-if="issues.length === 0" class="text-gray-600">

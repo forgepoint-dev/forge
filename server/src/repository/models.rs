@@ -42,6 +42,16 @@ pub struct RepositoryEntriesPayload {
     pub entries: Vec<RepositoryEntryNode>,
 }
 
+#[derive(Clone, Serialize)]
+pub struct RepositoryFilePayload {
+    pub path: String,
+    pub name: String,
+    pub size: i64,
+    pub is_binary: bool,
+    pub text: Option<String>,
+    pub truncated: bool,
+}
+
 impl From<RepositorySummaryRow> for RepositorySummary {
     fn from(row: RepositorySummaryRow) -> Self {
         RepositorySummary {

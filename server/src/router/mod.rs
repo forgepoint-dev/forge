@@ -14,17 +14,17 @@ use hive_router_plan_executor::introspection::schema::{SchemaMetadata, SchemaWit
 use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
 use hive_router_plan_executor::variables::collect_variables;
 use hive_router_query_planner::ast::normalization::normalize_operation;
-use hive_router_query_planner::planner::{plan_nodes::QueryPlan, Planner};
+use hive_router_query_planner::planner::{Planner, plan_nodes::QueryPlan};
 use hive_router_query_planner::state::supergraph_state::SchemaDocument;
 use hive_router_query_planner::utils::{
-    cancellation::CancellationToken,
-    parsing::safe_parse_operation,
+    cancellation::CancellationToken, parsing::safe_parse_operation,
 };
 use serde_json::Value as JsonValue;
 use sonic_rs::Value as SonicValue;
 use sqlx::SqlitePool;
 
 use crate::extensions::ExtensionManager;
+use crate::extensions::wit_bindings::GlobalContext;
 use crate::graphql::schema_composer::SchemaComposer;
 use crate::repository::RepositoryStorage;
 
@@ -48,7 +48,9 @@ impl RouterState {
         let mut composer = SchemaComposer::new();
         for (name, extension) in extension_manager.get_extensions() {
             let schema_sdl = extension.runtime.schema();
-            composer.add_subgraph(name.clone(), schema_sdl.to_string());
+            composer
+                .add_subgraph(name.clone(), schema_sdl.to_string())
+                .with_context(|| format!("failed to register schema for extension `{}`", name))?;
         }
         let supergraph_sdl = composer.compose()?;
 
@@ -72,11 +74,15 @@ impl RouterState {
             CoreSubgraphExecutor::new(pool.clone(), storage.clone()).to_boxed_arc(),
         );
 
+        let global_context = GlobalContext::default();
+
         for (name, extension) in extension_manager.get_extensions() {
             let executor = ExtensionSubgraphExecutor::new(
                 name.clone(),
                 extension.runtime.clone(),
                 extension.runtime.schema(),
+                pool.clone(),
+                global_context.clone(),
             )
             .with_context(|| format!("failed to initialise executor for extension `{}`", name))?;
             executor_map.insert_boxed_arc(name.clone(), executor.to_boxed_arc());
@@ -86,6 +92,8 @@ impl RouterState {
                 upper_name.clone(),
                 extension.runtime.clone(),
                 extension.runtime.schema(),
+                pool.clone(),
+                global_context.clone(),
             )
             .with_context(|| format!("failed to initialise executor for extension `{}`", name))?;
             executor_map.insert_boxed_arc(upper_name, executor_upper.to_boxed_arc());

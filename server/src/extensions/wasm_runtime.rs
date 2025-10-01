@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use super::loader::ExtensionLimits;
 use super::wit_bindings::{
-    ComponentExtension, ExtensionConfig, ExtensionInfo, ResolveInfo, ResolveResult,
+    ComponentExtension, ExtensionConfig, ExtensionInfo, RequestContext, ResolveInfo, ResolveResult,
 };
 
 /// High-level extension wrapper with runtime management
@@ -115,7 +115,7 @@ impl Extension {
     }
 
     /// Load an extension with a pre-configured database pool (for testing)
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[allow(dead_code)]
     pub async fn load_with_pool(
         wasm_path: &Path,
         extension_dir: &Path,
@@ -158,7 +158,7 @@ impl Extension {
         field_name: String,
         parent_type: String,
         arguments: serde_json::Value,
-        context: serde_json::Value,
+        context: RequestContext,
         parent: Option<serde_json::Value>,
     ) -> Result<serde_json::Value> {
         // Create resolve info

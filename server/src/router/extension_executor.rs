@@ -5,16 +5,23 @@ use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use bytes::Bytes;
 use graphql_parser::query::{
-    Definition, Field, OperationDefinition, Selection, SelectionSet, Value as AstValue,
+    Definition, Field, FragmentDefinition, OperationDefinition, Selection, SelectionSet,
+    TypeCondition, Value as AstValue,
 };
 use hive_router_plan_executor::executors::common::{HttpExecutionRequest, SubgraphExecutor};
 use serde_json::{Map, Value as JsonValue};
+use sqlx::SqlitePool;
 
 use crate::extensions::wasm_runtime::Extension as WasmExtension;
+use crate::extensions::wit_bindings::{
+    ContextScope, GlobalContext, RepositoryContext as RuntimeRepositoryContext, RequestContext,
+};
+use crate::repository::queries::get_repository_by_id;
 
 use super::{graphql_error_body, sonic_to_serde};
 
 type Vars = HashMap<String, JsonValue>;
+type FragmentMap<'a> = HashMap<&'a str, &'a FragmentDefinition<'a, String>>;
 
 #[derive(Clone)]
 struct FieldTypeMeta {
@@ -40,15 +47,25 @@ pub(crate) struct ExtensionSubgraphExecutor {
     subgraph_name: String,
     runtime: Arc<WasmExtension>,
     schema: ExtensionSchemaMetadata,
+    pool: SqlitePool,
+    global_context: GlobalContext,
 }
 
 impl ExtensionSubgraphExecutor {
-    pub fn new(name: String, runtime: Arc<WasmExtension>, schema_sdl: &str) -> Result<Self> {
+    pub fn new(
+        name: String,
+        runtime: Arc<WasmExtension>,
+        schema_sdl: &str,
+        pool: SqlitePool,
+        global_context: GlobalContext,
+    ) -> Result<Self> {
         let schema = ExtensionSchemaMetadata::from_sdl(schema_sdl)?;
         Ok(Self {
             subgraph_name: name,
             runtime,
             schema,
+            pool,
+            global_context,
         })
     }
 
@@ -67,18 +84,29 @@ impl ExtensionSubgraphExecutor {
         let operation = self
             .find_operation(&document, execution_request.operation_name)
             .context("operation not found")?;
+        let fragments = collect_fragment_definitions(&document);
         let variables = self.build_variables(execution_request.variables)?;
 
         let data_value = match operation {
             OperationDefinition::Query(query) => {
                 let map = self
-                    .resolve_query_selection_set(&query.selection_set, &variables)
+                    .resolve_query_selection_set(
+                        &query.selection_set,
+                        &variables,
+                        &fragments,
+                        "Query",
+                    )
                     .await?;
                 JsonValue::Object(map)
             }
             OperationDefinition::Mutation(mutation) => {
                 let map = self
-                    .resolve_mutation_selection_set(&mutation.selection_set, &variables)
+                    .resolve_mutation_selection_set(
+                        &mutation.selection_set,
+                        &variables,
+                        &fragments,
+                        "Mutation",
+                    )
                     .await?;
                 JsonValue::Object(map)
             }
@@ -87,7 +115,7 @@ impl ExtensionSubgraphExecutor {
             }
             OperationDefinition::SelectionSet(selection_set) => {
                 let map = self
-                    .resolve_query_selection_set(selection_set, &variables)
+                    .resolve_query_selection_set(selection_set, &variables, &fragments, "Query")
                     .await?;
                 JsonValue::Object(map)
             }
@@ -143,42 +171,49 @@ impl ExtensionSubgraphExecutor {
         Ok(out)
     }
 
-    async fn resolve_query_selection_set(
+    async fn resolve_query_selection_set<'a>(
         &self,
-        selection_set: &SelectionSet<'_, String>,
+        selection_set: &'a SelectionSet<'a, String>,
         variables: &Vars,
+        fragments: &FragmentMap<'a>,
+        type_name: &str,
     ) -> Result<Map<String, JsonValue>> {
         let mut map = Map::new();
-        for selection in &selection_set.items {
-            if let Selection::Field(field) = selection {
-                let key = response_key(field);
-                let value = self.resolve_query_field(field, variables).await?;
-                map.insert(key, value);
-            }
+        let fields = selection_fields(selection_set, type_name, fragments)?;
+        for field in fields {
+            let key = response_key(field);
+            let value = self
+                .resolve_query_field(field, variables, fragments)
+                .await?;
+            map.insert(key, value);
         }
         Ok(map)
     }
 
-    async fn resolve_mutation_selection_set(
+    async fn resolve_mutation_selection_set<'a>(
         &self,
-        selection_set: &SelectionSet<'_, String>,
+        selection_set: &'a SelectionSet<'a, String>,
         variables: &Vars,
+        fragments: &FragmentMap<'a>,
+        type_name: &str,
     ) -> Result<Map<String, JsonValue>> {
         let mut map = Map::new();
-        for selection in &selection_set.items {
-            if let Selection::Field(field) = selection {
-                let key = response_key(field);
-                let value = self.resolve_mutation_field(field, variables).await?;
-                map.insert(key, value);
-            }
+        let fields = selection_fields(selection_set, type_name, fragments)?;
+        for field in fields {
+            let key = response_key(field);
+            let value = self
+                .resolve_mutation_field(field, variables, fragments)
+                .await?;
+            map.insert(key, value);
         }
         Ok(map)
     }
 
-    async fn resolve_query_field(
+    async fn resolve_query_field<'a>(
         &self,
-        field: &Field<'_, String>,
+        field: &'a Field<'a, String>,
         variables: &Vars,
+        fragments: &FragmentMap<'a>,
     ) -> Result<JsonValue> {
         let field_meta = self
             .schema
@@ -186,6 +221,7 @@ impl ExtensionSubgraphExecutor {
             .get(&field.name)
             .ok_or_else(|| anyhow!("Unsupported query field `{}`", field.name))?;
         let args = self.build_argument_map(field, variables)?;
+        let context = self.build_request_context(&args).await?;
         let args_value = JsonValue::Object(args);
         let result = self
             .runtime
@@ -193,7 +229,7 @@ impl ExtensionSubgraphExecutor {
                 field.name.clone(),
                 "Query".to_string(),
                 args_value,
-                JsonValue::Null,
+                context,
                 None,
             )
             .await
@@ -203,13 +239,14 @@ impl ExtensionSubgraphExecutor {
                     self.subgraph_name, field.name
                 )
             })?;
-        self.project_by_type(&result, &field.selection_set, field_meta)
+        self.project_by_type(&result, &field.selection_set, field_meta, fragments)
     }
 
-    async fn resolve_mutation_field(
+    async fn resolve_mutation_field<'a>(
         &self,
-        field: &Field<'_, String>,
+        field: &'a Field<'a, String>,
         variables: &Vars,
+        fragments: &FragmentMap<'a>,
     ) -> Result<JsonValue> {
         let field_meta = self
             .schema
@@ -217,6 +254,7 @@ impl ExtensionSubgraphExecutor {
             .get(&field.name)
             .ok_or_else(|| anyhow!("Unsupported mutation field `{}`", field.name))?;
         let args = self.build_argument_map(field, variables)?;
+        let context = self.build_request_context(&args).await?;
         let args_value = JsonValue::Object(args);
         let result = self
             .runtime
@@ -224,7 +262,7 @@ impl ExtensionSubgraphExecutor {
                 field.name.clone(),
                 "Mutation".to_string(),
                 args_value,
-                JsonValue::Null,
+                context,
                 None,
             )
             .await
@@ -234,7 +272,7 @@ impl ExtensionSubgraphExecutor {
                     self.subgraph_name, field.name
                 )
             })?;
-        self.project_by_type(&result, &field.selection_set, field_meta)
+        self.project_by_type(&result, &field.selection_set, field_meta, fragments)
     }
 
     fn build_argument_map(
@@ -247,6 +285,50 @@ impl ExtensionSubgraphExecutor {
             map.insert(name.clone(), self.evaluate_value(value, variables)?);
         }
         Ok(map)
+    }
+
+    async fn build_request_context(&self, args: &Map<String, JsonValue>) -> Result<RequestContext> {
+        let mut context = RequestContext::default();
+
+        if self.has_global_context_payload() {
+            context.global = Some(self.global_context.clone());
+        }
+
+        if let Some(repository_id) = self.extract_repository_id(args) {
+            let record = get_repository_by_id(&self.pool, repository_id)
+                .await
+                .with_context(|| {
+                    format!(
+                        "failed to load repository `{}` for extension `{}`",
+                        repository_id, self.subgraph_name
+                    )
+                })?
+                .ok_or_else(|| anyhow!("repository `{}` not found", repository_id))?;
+
+            context.scope = ContextScope::Repository;
+            context.repository = Some(RuntimeRepositoryContext {
+                id: record.id,
+                slug: record.slug,
+                group_id: record.group_id,
+                full_path: None,
+                is_remote: record.remote_url.is_some(),
+                remote_url: record.remote_url,
+            });
+        }
+
+        Ok(context)
+    }
+
+    fn extract_repository_id<'a>(&self, args: &'a Map<String, JsonValue>) -> Option<&'a str> {
+        args.get("repositoryId")
+            .and_then(|value| value.as_str())
+            .or_else(|| args.get("repository_id").and_then(|value| value.as_str()))
+    }
+
+    fn has_global_context_payload(&self) -> bool {
+        self.global_context.installation_id.is_some()
+            || self.global_context.environment.is_some()
+            || !self.global_context.feature_flags.is_empty()
     }
 
     fn evaluate_value(&self, value: &AstValue<'_, String>, variables: &Vars) -> Result<JsonValue> {
@@ -285,11 +367,12 @@ impl ExtensionSubgraphExecutor {
         })
     }
 
-    fn project_by_type(
+    fn project_by_type<'a>(
         &self,
         value: &JsonValue,
-        selection_set: &SelectionSet<'_, String>,
+        selection_set: &'a SelectionSet<'a, String>,
         field_type: &FieldTypeMeta,
+        fragments: &FragmentMap<'a>,
     ) -> Result<JsonValue> {
         if field_type.is_list {
             let items = match value {
@@ -304,19 +387,25 @@ impl ExtensionSubgraphExecutor {
             };
             let mut projected = Vec::with_capacity(items.len());
             for item in items {
-                projected.push(self.project_single(item, selection_set, &field_type.base_type)?);
+                projected.push(self.project_single(
+                    item,
+                    selection_set,
+                    &field_type.base_type,
+                    fragments,
+                )?);
             }
             Ok(JsonValue::Array(projected))
         } else {
-            self.project_single(value, selection_set, &field_type.base_type)
+            self.project_single(value, selection_set, &field_type.base_type, fragments)
         }
     }
 
-    fn project_single(
+    fn project_single<'a>(
         &self,
         value: &JsonValue,
-        selection_set: &SelectionSet<'_, String>,
+        selection_set: &'a SelectionSet<'a, String>,
         type_name: &str,
+        fragments: &FragmentMap<'a>,
     ) -> Result<JsonValue> {
         if selection_set.items.is_empty() || !self.schema.object_types.contains_key(type_name) {
             return Ok(value.clone());
@@ -341,26 +430,93 @@ impl ExtensionSubgraphExecutor {
             .ok_or_else(|| anyhow!("Unknown object type `{}`", type_name))?;
 
         let mut map = Map::new();
-        for selection in &selection_set.items {
-            if let Selection::Field(field) = selection {
-                let key = response_key(field);
-                if field.name == "__typename" {
-                    map.insert(key, JsonValue::String(type_name.to_string()));
-                    continue;
-                }
-
-                let field_meta = type_meta.fields.get(&field.name).ok_or_else(|| {
-                    anyhow!("Unknown field `{}` on type `{}`", field.name, type_name)
-                })?;
-
-                let child_value = object.get(&field.name).cloned().unwrap_or(JsonValue::Null);
-                let projected_child =
-                    self.project_by_type(&child_value, &field.selection_set, field_meta)?;
-                map.insert(key, projected_child);
+        let fields = selection_fields(selection_set, type_name, fragments)?;
+        for field in fields {
+            let key = response_key(field);
+            if field.name == "__typename" {
+                map.insert(key, JsonValue::String(type_name.to_string()));
+                continue;
             }
+
+            let field_meta = type_meta
+                .fields
+                .get(&field.name)
+                .ok_or_else(|| anyhow!("Unknown field `{}` on type `{}`", field.name, type_name))?;
+
+            let child_value = object.get(&field.name).cloned().unwrap_or(JsonValue::Null);
+            let projected_child =
+                self.project_by_type(&child_value, &field.selection_set, field_meta, fragments)?;
+            map.insert(key, projected_child);
         }
 
         Ok(JsonValue::Object(map))
+    }
+}
+
+fn collect_fragment_definitions<'a>(
+    document: &'a graphql_parser::query::Document<'a, String>,
+) -> FragmentMap<'a> {
+    let mut fragments: FragmentMap<'a> = HashMap::new();
+    for definition in &document.definitions {
+        if let Definition::Fragment(fragment) = definition {
+            fragments.insert(fragment.name.as_str(), fragment);
+        }
+    }
+    fragments
+}
+
+fn selection_fields<'a>(
+    selection_set: &'a SelectionSet<'a, String>,
+    type_name: &str,
+    fragments: &FragmentMap<'a>,
+) -> Result<Vec<&'a Field<'a, String>>> {
+    let mut fields = Vec::new();
+    collect_selection_fields(selection_set, type_name, fragments, &mut fields)?;
+    Ok(fields)
+}
+
+fn collect_selection_fields<'a>(
+    selection_set: &'a SelectionSet<'a, String>,
+    type_name: &str,
+    fragments: &FragmentMap<'a>,
+    out: &mut Vec<&'a Field<'a, String>>,
+) -> Result<()> {
+    for selection in &selection_set.items {
+        match selection {
+            Selection::Field(field) => out.push(field),
+            Selection::FragmentSpread(fragment_spread) => {
+                let fragment = fragments
+                    .get(fragment_spread.fragment_name.as_str())
+                    .ok_or_else(|| {
+                        anyhow!("Unknown fragment `{}`", fragment_spread.fragment_name)
+                    })?;
+                if type_condition_matches(type_name, &fragment.type_condition) {
+                    collect_selection_fields(&fragment.selection_set, type_name, fragments, out)?;
+                }
+            }
+            Selection::InlineFragment(inline_fragment) => {
+                if inline_fragment
+                    .type_condition
+                    .as_ref()
+                    .map(|cond| type_condition_matches(type_name, cond))
+                    .unwrap_or(true)
+                {
+                    collect_selection_fields(
+                        &inline_fragment.selection_set,
+                        type_name,
+                        fragments,
+                        out,
+                    )?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn type_condition_matches(type_name: &str, type_condition: &TypeCondition<'_, String>) -> bool {
+    match type_condition {
+        TypeCondition::On(target) => target == type_name,
     }
 }
 

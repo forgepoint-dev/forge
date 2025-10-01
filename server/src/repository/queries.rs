@@ -1,9 +1,12 @@
 use sqlx::SqlitePool;
 
 use super::db::resolve_repository_by_path;
-use super::entries::{normalize_tree_path, read_repository_entries};
+use super::entries::{
+    normalize_file_path, normalize_tree_path, read_repository_entries, read_repository_file,
+};
 use super::models::{
-    RepositoryEntriesPayload, RepositoryRecord, RepositorySummary, RepositorySummaryRow,
+    RepositoryEntriesPayload, RepositoryFilePayload, RepositoryRecord, RepositorySummary,
+    RepositorySummaryRow,
 };
 use super::storage::RepositoryStorage;
 use crate::validation::slug::validate_slug;
@@ -16,6 +19,20 @@ pub async fn get_all_repositories_raw(pool: &SqlitePool) -> anyhow::Result<Vec<R
     .await?;
 
     Ok(records)
+}
+
+pub async fn get_repository_by_id(
+    pool: &SqlitePool,
+    id: &str,
+) -> anyhow::Result<Option<RepositoryRecord>> {
+    let record = sqlx::query_as::<_, RepositoryRecord>(
+        "SELECT id, slug, \"group\" as group_id, remote_url FROM repositories WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(record)
 }
 
 pub async fn get_repository_raw(
@@ -66,6 +83,44 @@ pub async fn browse_repository_raw(
         tree_path: normalized_tree_path,
         entries,
     }))
+}
+
+pub async fn read_repository_file_raw(
+    pool: &SqlitePool,
+    storage: &RepositoryStorage,
+    path: String,
+    file_path: String,
+) -> anyhow::Result<Option<RepositoryFilePayload>> {
+    let segments: Vec<String> = path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| segment.to_string())
+        .collect();
+
+    if segments.is_empty() {
+        return Ok(None);
+    }
+
+    for segment in &segments {
+        validate_slug(segment)?;
+    }
+
+    let record = resolve_repository_by_path(pool, &path).await?;
+    let Some(record) = record else {
+        return Ok(None);
+    };
+
+    let normalized_file_path = normalize_file_path(file_path)?;
+
+    let repository_path = if record.remote_url.is_some() {
+        storage.ensure_remote_repository(&record).await?
+    } else {
+        storage.ensure_local_repository(&segments)?
+    };
+
+    let file = read_repository_file(repository_path, normalized_file_path).await?;
+
+    Ok(Some(file))
 }
 
 pub async fn get_repositories_for_group(

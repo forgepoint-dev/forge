@@ -2,14 +2,18 @@
 //!
 //! This extension adds issue tracking capabilities to the GraphQL API with SQLite persistence.
 
+#![allow(unsafe_op_in_unsafe_fn)]
+
 use serde::{Deserialize, Serialize};
 
 wit_bindgen::generate!({
     world: "extension",
-    path: "../../../../packages/wit",
+    path: "../../../packages/wit",
 });
 
-use exports::forge::extension::extension_api::{Config, ExtensionInfo, Guest, ResolveInfo, ResolveResult};
+use exports::forge::extension::extension_api::{
+    Config, ContextScope, ExtensionInfo, Guest, ResolveInfo, ResolveResult,
+};
 use forge::extension::host_database::{self, RecordValue};
 use forge::extension::host_log::{self, LogLevel};
 
@@ -21,7 +25,10 @@ struct Issue {
     title: String,
     description: Option<String>,
     status: String,
+    #[serde(rename = "createdAt")]
     created_at: String,
+    #[serde(rename = "repositoryId")]
+    repository_id: String,
 }
 
 #[derive(Deserialize)]
@@ -44,6 +51,7 @@ impl Guest for IssuesExtension {
         let migrations = r#"
             CREATE TABLE IF NOT EXISTS issues (
                 id TEXT PRIMARY KEY,
+                repository_id TEXT NOT NULL,
                 title TEXT NOT NULL,
                 description TEXT,
                 status TEXT NOT NULL DEFAULT 'OPEN',
@@ -57,16 +65,16 @@ impl Guest for IssuesExtension {
         match host_database::migrate(migrations) {
             Ok(_) => {
                 host_log::log(LogLevel::Info, "Issues extension initialized with database");
-                Ok(())
+                ensure_repository_schema().map_err(|e| format!("Migration failed: {}", e))
             }
-            Err(e) => Err(format!("Migration failed: {}", e))
+            Err(e) => Err(format!("Migration failed: {}", e)),
         }
     }
 
     fn get_info() -> ExtensionInfo {
         ExtensionInfo {
             name: "issues".to_string(),
-            version: "0.1.0".to_string(),
+            version: "0.2.0".to_string(),
             capabilities: vec!["basic".to_string(), "database".to_string()],
         }
     }
@@ -76,12 +84,36 @@ impl Guest for IssuesExtension {
     }
 
     fn resolve_field(info: ResolveInfo) -> ResolveResult {
-        match info.field_name.as_str() {
-            "getAllIssues" => resolve_get_all_issues(),
-            "getIssue" => resolve_get_issue(&info.arguments),
-            "createIssue" => resolve_create_issue(&info.arguments),
-            "updateIssue" => resolve_update_issue(&info.arguments),
-            _ => ResolveResult::Error(format!("Unknown field: {}", info.field_name))
+        let ResolveInfo {
+            field_name,
+            arguments,
+            context,
+            ..
+        } = info;
+
+        let scope = context.scope;
+        let repository_context_id = context.repository.map(|ctx| ctx.id);
+
+        if matches!(
+            field_name.as_str(),
+            "getIssuesForRepository" | "getIssue" | "createIssue" | "updateIssue"
+        ) && !matches!(
+            scope,
+            ContextScope::Repository | ContextScope::RepositoryUser
+        ) {
+            return ResolveResult::Error(
+                "Repository-scoped context required for issues operations".to_string(),
+            );
+        }
+
+        match field_name.as_str() {
+            "getIssuesForRepository" => {
+                resolve_get_issues_for_repository(&arguments, repository_context_id.as_deref())
+            }
+            "getIssue" => resolve_get_issue(&arguments, repository_context_id.as_deref()),
+            "createIssue" => resolve_create_issue(&arguments, repository_context_id.as_deref()),
+            "updateIssue" => resolve_update_issue(&arguments, repository_context_id.as_deref()),
+            _ => ResolveResult::Error(format!("Unknown field: {}", field_name)),
         }
     }
 
@@ -90,26 +122,35 @@ impl Guest for IssuesExtension {
     }
 }
 
-fn resolve_get_all_issues() -> ResolveResult {
-    let sql = "SELECT id, title, description, status, created_at FROM issues ORDER BY created_at DESC";
+fn resolve_get_issues_for_repository(
+    arguments: &str,
+    context_repository: Option<&str>,
+) -> ResolveResult {
+    #[derive(Deserialize)]
+    struct Args {
+        #[serde(rename = "repositoryId")]
+        repository_id: String,
+    }
 
-    match host_database::query(sql, &[]) {
+    let args: Args = match serde_json::from_str(arguments) {
+        Ok(a) => a,
+        Err(e) => return ResolveResult::Error(format!("Invalid arguments: {}", e)),
+    };
+
+    if let Err(err) = assert_repository_context(context_repository, &args.repository_id) {
+        return ResolveResult::Error(err);
+    }
+
+    let sql = "SELECT id, repository_id, title, description, status, created_at FROM issues WHERE repository_id = ? ORDER BY created_at DESC";
+    let params = vec![RecordValue::Text(args.repository_id.clone())];
+
+    match host_database::query(sql, &params) {
         host_database::QueryResult::Success(rows) => {
-            let issues: Vec<Issue> = rows.into_iter().map(|row| {
-                let values = row.values;
-                Issue {
-                    id: extract_string(&values[0]),
-                    title: extract_string(&values[1]),
-                    description: extract_optional_string(&values[2]),
-                    status: extract_string(&values[3]),
-                    created_at: extract_string(&values[4]),
-                }
-            }).collect();
-
-            match serde_json::to_string(&issues) {
-                Ok(json) => ResolveResult::Success(json),
-                Err(e) => ResolveResult::Error(format!("Serialization error: {}", e))
-            }
+            let issues: Vec<Issue> = rows
+                .into_iter()
+                .map(|row| issue_from_values(&row.values))
+                .collect();
+            serialize_issues(issues)
         }
         host_database::QueryResult::Error(e) => {
             ResolveResult::Error(format!("Database error: {}", e))
@@ -117,63 +158,54 @@ fn resolve_get_all_issues() -> ResolveResult {
     }
 }
 
-fn resolve_get_issue(arguments: &str) -> ResolveResult {
+fn resolve_get_issue(arguments: &str, context_repository: Option<&str>) -> ResolveResult {
     #[derive(Deserialize)]
     struct Args {
+        #[serde(rename = "repositoryId")]
+        repository_id: String,
         id: String,
     }
 
     let args: Args = match serde_json::from_str(arguments) {
         Ok(a) => a,
-        Err(e) => return ResolveResult::Error(format!("Invalid arguments: {}", e))
+        Err(e) => return ResolveResult::Error(format!("Invalid arguments: {}", e)),
     };
 
-    let sql = "SELECT id, title, description, status, created_at FROM issues WHERE id = ?";
-    let params = vec![RecordValue::Text(args.id)];
+    if let Err(err) = assert_repository_context(context_repository, &args.repository_id) {
+        return ResolveResult::Error(err);
+    }
 
-    match host_database::query(sql, &params) {
-        host_database::QueryResult::Success(rows) => {
-            if rows.is_empty() {
-                return ResolveResult::Success("null".to_string());
-            }
-
-            let row = &rows[0];
-            let issue = Issue {
-                id: extract_string(&row.values[0]),
-                title: extract_string(&row.values[1]),
-                description: extract_optional_string(&row.values[2]),
-                status: extract_string(&row.values[3]),
-                created_at: extract_string(&row.values[4]),
-            };
-
-            match serde_json::to_string(&issue) {
-                Ok(json) => ResolveResult::Success(json),
-                Err(e) => ResolveResult::Error(format!("Serialization error: {}", e))
-            }
-        }
-        host_database::QueryResult::Error(e) => {
-            ResolveResult::Error(format!("Database error: {}", e))
-        }
+    match query_issue_by_id(&args.repository_id, &args.id) {
+        Ok(Some(issue)) => serialize_issue(issue),
+        Ok(None) => ResolveResult::Success("null".to_string()),
+        Err(err) => ResolveResult::Error(err),
     }
 }
 
-fn resolve_create_issue(arguments: &str) -> ResolveResult {
+fn resolve_create_issue(arguments: &str, context_repository: Option<&str>) -> ResolveResult {
     #[derive(Deserialize)]
     struct Args {
+        #[serde(rename = "repositoryId")]
+        repository_id: String,
         input: CreateIssueInput,
     }
 
     let args: Args = match serde_json::from_str(arguments) {
         Ok(a) => a,
-        Err(e) => return ResolveResult::Error(format!("Invalid arguments: {}", e))
+        Err(e) => return ResolveResult::Error(format!("Invalid arguments: {}", e)),
     };
+
+    if let Err(err) = assert_repository_context(context_repository, &args.repository_id) {
+        return ResolveResult::Error(err);
+    }
 
     let id = format!("issue_{}", chrono::Utc::now().timestamp());
     let created_at = chrono::Utc::now().to_rfc3339();
 
-    let sql = "INSERT INTO issues (id, title, description, status, created_at) VALUES (?, ?, ?, ?, ?)";
+    let sql = "INSERT INTO issues (id, repository_id, title, description, status, created_at) VALUES (?, ?, ?, ?, ?, ?)";
     let params = vec![
         RecordValue::Text(id.clone()),
+        RecordValue::Text(args.repository_id.clone()),
         RecordValue::Text(args.input.title.clone()),
         match &args.input.description {
             Some(d) => RecordValue::Text(d.clone()),
@@ -191,12 +223,9 @@ fn resolve_create_issue(arguments: &str) -> ResolveResult {
                 description: args.input.description,
                 status: "OPEN".to_string(),
                 created_at,
+                repository_id: args.repository_id,
             };
-
-            match serde_json::to_string(&issue) {
-                Ok(json) => ResolveResult::Success(json),
-                Err(e) => ResolveResult::Error(format!("Serialization error: {}", e))
-            }
+            serialize_issue(issue)
         }
         host_database::ExecResult::Error(e) => {
             ResolveResult::Error(format!("Database error: {}", e))
@@ -204,17 +233,23 @@ fn resolve_create_issue(arguments: &str) -> ResolveResult {
     }
 }
 
-fn resolve_update_issue(arguments: &str) -> ResolveResult {
+fn resolve_update_issue(arguments: &str, context_repository: Option<&str>) -> ResolveResult {
     #[derive(Deserialize)]
     struct Args {
+        #[serde(rename = "repositoryId")]
+        repository_id: String,
         id: String,
         input: UpdateIssueInput,
     }
 
     let args: Args = match serde_json::from_str(arguments) {
         Ok(a) => a,
-        Err(e) => return ResolveResult::Error(format!("Invalid arguments: {}", e))
+        Err(e) => return ResolveResult::Error(format!("Invalid arguments: {}", e)),
     };
+
+    if let Err(err) = assert_repository_context(context_repository, &args.repository_id) {
+        return ResolveResult::Error(err);
+    }
 
     let mut updates = Vec::new();
     let mut params = Vec::new();
@@ -236,8 +271,12 @@ fn resolve_update_issue(arguments: &str) -> ResolveResult {
         return ResolveResult::Error("No fields to update".to_string());
     }
 
-    let sql = format!("UPDATE issues SET {} WHERE id = ?", updates.join(", "));
+    let sql = format!(
+        "UPDATE issues SET {} WHERE id = ? AND repository_id = ?",
+        updates.join(", ")
+    );
     params.push(RecordValue::Text(args.id.clone()));
+    params.push(RecordValue::Text(args.repository_id.clone()));
 
     match host_database::execute(&sql, &params) {
         host_database::ExecResult::Success(info) => {
@@ -245,12 +284,72 @@ fn resolve_update_issue(arguments: &str) -> ResolveResult {
                 return ResolveResult::Success("null".to_string());
             }
 
-            resolve_get_issue(&format!(r#"{{"id":"{}"}}"#, args.id))
+            match query_issue_by_id(&args.repository_id, &args.id) {
+                Ok(Some(issue)) => serialize_issue(issue),
+                Ok(None) => ResolveResult::Success("null".to_string()),
+                Err(err) => ResolveResult::Error(err),
+            }
         }
         host_database::ExecResult::Error(e) => {
             ResolveResult::Error(format!("Database error: {}", e))
         }
     }
+}
+
+fn serialize_issues(issues: Vec<Issue>) -> ResolveResult {
+    match serde_json::to_string(&issues) {
+        Ok(json) => ResolveResult::Success(json),
+        Err(e) => ResolveResult::Error(format!("Serialization error: {}", e)),
+    }
+}
+
+fn serialize_issue(issue: Issue) -> ResolveResult {
+    match serde_json::to_string(&issue) {
+        Ok(json) => ResolveResult::Success(json),
+        Err(e) => ResolveResult::Error(format!("Serialization error: {}", e)),
+    }
+}
+
+fn issue_from_values(values: &[RecordValue]) -> Issue {
+    Issue {
+        id: extract_string(&values[0]),
+        repository_id: extract_string(&values[1]),
+        title: extract_string(&values[2]),
+        description: extract_optional_string(&values[3]),
+        status: extract_string(&values[4]),
+        created_at: extract_string(&values[5]),
+    }
+}
+
+fn query_issue_by_id(repository_id: &str, id: &str) -> Result<Option<Issue>, String> {
+    let sql = "SELECT id, repository_id, title, description, status, created_at FROM issues WHERE repository_id = ? AND id = ?";
+    let params = vec![
+        RecordValue::Text(repository_id.to_string()),
+        RecordValue::Text(id.to_string()),
+    ];
+
+    match host_database::query(sql, &params) {
+        host_database::QueryResult::Success(rows) => Ok(rows
+            .into_iter()
+            .next()
+            .map(|row| issue_from_values(&row.values))),
+        host_database::QueryResult::Error(e) => Err(format!("Database error: {}", e)),
+    }
+}
+
+fn assert_repository_context(
+    context_repository: Option<&str>,
+    repository_id: &str,
+) -> Result<(), String> {
+    if let Some(expected) = context_repository {
+        if expected != repository_id {
+            return Err(format!(
+                "Repository context mismatch: expected `{}`, got `{}`",
+                expected, repository_id
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn extract_string(value: &RecordValue) -> String {
@@ -265,6 +364,60 @@ fn extract_optional_string(value: &RecordValue) -> Option<String> {
         RecordValue::Text(s) => Some(s.clone()),
         RecordValue::Null => None,
         _ => None,
+    }
+}
+
+fn ensure_repository_schema() -> Result<(), String> {
+    let columns = match host_database::query("PRAGMA table_info(issues);", &[]) {
+        host_database::QueryResult::Success(rows) => rows,
+        host_database::QueryResult::Error(e) => {
+            return Err(format!("Failed to inspect issues table: {}", e));
+        }
+    };
+
+    let has_repository_column = columns.iter().any(|row| {
+        row.values
+            .get(1)
+            .and_then(|value| match value {
+                RecordValue::Text(name) => Some(name == "repository_id"),
+                _ => None,
+            })
+            .unwrap_or(false)
+    });
+
+    if !has_repository_column {
+        host_log::log(
+            LogLevel::Info,
+            "Migrating issues table to add repository_id column",
+        );
+        match host_database::execute(
+            "ALTER TABLE issues ADD COLUMN repository_id TEXT DEFAULT 'legacy'",
+            &[],
+        ) {
+            host_database::ExecResult::Success(_) => {
+                // ensure rows receive a non-null value
+                let _ = host_database::execute(
+                    "UPDATE issues SET repository_id = 'legacy' WHERE repository_id IS NULL",
+                    &[],
+                );
+            }
+            host_database::ExecResult::Error(e) => {
+                return Err(format!(
+                    "Failed to add repository_id column to issues table: {}",
+                    e
+                ));
+            }
+        }
+    }
+
+    match host_database::execute(
+        "CREATE INDEX IF NOT EXISTS idx_issues_repository ON issues(repository_id, created_at DESC)",
+        &[],
+    ) {
+        host_database::ExecResult::Success(_) => Ok(()),
+        host_database::ExecResult::Error(e) => {
+            Err(format!("Failed to ensure repository index: {}", e))
+        }
     }
 }
 

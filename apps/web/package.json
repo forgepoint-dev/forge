@@ -14,14 +14,17 @@
 		"test:e2e:ui": "playwright test --ui"
 	},
 	"dependencies": {
-		"astro": "^5.14.1",
-		"@astrojs/vue": "^5.0.0",
 		"@astrojs/tailwind": "^5.0.0",
-		"vue": "^3.4.38",
-		"tailwindcss": "^3.4.14",
+		"@astrojs/vue": "^5.0.0",
+		"@expressive-code/core": "^0.41.3",
+		"@expressive-code/plugin-line-numbers": "^0.41.3",
+		"@expressive-code/plugin-shiki": "^0.41.3",
+		"astro": "^5.14.1",
 		"autoprefixer": "^10.4.20",
+		"design": "workspace:*",
 		"postcss": "^8.4.47",
-		"design": "workspace:*"
+		"tailwindcss": "^3.4.14",
+		"vue": "^3.4.38"
 	},
 	"devDependencies": {
 		"vitest": "^2.0.0",

@@ -1,6 +1,6 @@
 //! Integration test for WASM extensions
 
-use server::extensions::{loader::ExtensionLimits, wasm_runtime};
+use server::extensions::{loader::ExtensionLimits, wasm_runtime, wit_bindings::RequestContext};
 use server::test_helpers;
 use std::path::Path;
 use tempfile::TempDir;
@@ -50,7 +50,7 @@ async fn test_load_example_extension() {
             "users".to_string(),
             "Query".to_string(),
             serde_json::json!({}),
-            serde_json::json!({}),
+            RequestContext::default(),
             None,
         )
         .await
@@ -103,7 +103,7 @@ async fn test_extension_field_resolution_with_arguments() {
             "user".to_string(),
             "Query".to_string(),
             serde_json::json!({"id": "42"}),
-            serde_json::json!({}),
+            RequestContext::default(),
             None,
         )
         .await
@@ -151,7 +151,7 @@ async fn test_extension_error_handling() {
             "unknown_field".to_string(),
             "Query".to_string(),
             serde_json::json!({}),
-            serde_json::json!({}),
+            RequestContext::default(),
             None,
         )
         .await;

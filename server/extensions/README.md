@@ -102,6 +102,7 @@ type Issue {
   description: String
   status: IssueStatus!
   createdAt: String!
+  repositoryId: ID!
 }
 
 enum IssueStatus {
@@ -111,13 +112,13 @@ enum IssueStatus {
 }
 
 extend type Query {
-  getAllIssues: [Issue!]!
-  getIssue(id: ID!): Issue
+  getIssuesForRepository(repositoryId: ID!): [Issue!]!
+  getIssue(repositoryId: ID!, id: ID!): Issue
 }
 
 extend type Mutation {
-  createIssue(input: CreateIssueInput!): Issue!
-  updateIssue(id: ID!, input: UpdateIssueInput!): Issue
+  createIssue(repositoryId: ID!, input: CreateIssueInput!): Issue!
+  updateIssue(repositoryId: ID!, id: ID!, input: UpdateIssueInput!): Issue
 }
 ```
 

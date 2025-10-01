@@ -51,7 +51,7 @@ async fn setup_router_state() -> Result<RouterTestContext> {
 
 #[tokio::test]
 async fn query_core_data_through_router() -> Result<()> {
-    let mut ctx = setup_router_state().await?;
+    let ctx = setup_router_state().await?;
 
     let group_id = create_id();
     sqlx::query("INSERT INTO groups (id, slug, parent) VALUES (?, ?, NULL)")
@@ -88,7 +88,7 @@ async fn query_core_data_through_router() -> Result<()> {
 
 #[tokio::test]
 async fn mutation_creates_group_via_router() -> Result<()> {
-    let mut ctx = setup_router_state().await?;
+    let ctx = setup_router_state().await?;
 
     let mut variables: HashMap<String, SonicValue> = HashMap::new();
     variables.insert("slug".to_string(), sonic_rs::to_value("new-group")?);

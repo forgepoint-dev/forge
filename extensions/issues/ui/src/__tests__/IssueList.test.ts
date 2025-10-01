@@ -1,12 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { mount } from '@vue/test-utils';
+import type { Mock } from 'vitest';
+import { config, mount } from '@vue/test-utils';
 import IssueList from '../components/IssueList.vue';
 
 vi.mock('../lib/client', () => ({
-	getAllIssues: vi.fn(),
+	getIssuesForRepository: vi.fn(),
 }));
 
-import { getAllIssues } from '../lib/client';
+import { getIssuesForRepository } from '../lib/client';
+
+const getIssuesForRepositoryMock = getIssuesForRepository as unknown as Mock;
 
 describe('IssueList.vue', () => {
 	beforeEach(() => {
@@ -14,9 +17,11 @@ describe('IssueList.vue', () => {
 	});
 
 	it('renders loading state initially', () => {
-		vi.mocked(getAllIssues).mockReturnValue(new Promise(() => {}));
+		getIssuesForRepositoryMock.mockReturnValue(new Promise(() => {}));
 
-		const wrapper = mount(IssueList);
+		const wrapper = mount(IssueList, {
+			props: { repositoryId: 'repo-1' },
+		});
 
 		expect(wrapper.text()).toContain('Loading');
 	});
@@ -28,20 +33,24 @@ describe('IssueList.vue', () => {
 				title: 'Test Issue 1',
 				status: 'OPEN',
 				createdAt: '2025-01-01T00:00:00Z',
+				repositoryId: 'repo-1',
 			},
 			{
 				id: 'issue_2',
 				title: 'Test Issue 2',
 				status: 'CLOSED',
 				createdAt: '2025-01-02T00:00:00Z',
+				repositoryId: 'repo-1',
 			},
 		];
 
-		vi.mocked(getAllIssues).mockResolvedValue({
-			getAllIssues: mockIssues,
+		getIssuesForRepositoryMock.mockResolvedValue({
+			getIssuesForRepository: mockIssues,
 		} as any);
 
-		const wrapper = mount(IssueList);
+		const wrapper = mount(IssueList, {
+			props: { repositoryId: 'repo-1' },
+		});
 		await wrapper.vm.$nextTick();
 		await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -50,9 +59,11 @@ describe('IssueList.vue', () => {
 	});
 
 	it('renders error message when loading fails', async () => {
-		vi.mocked(getAllIssues).mockRejectedValue(new Error('Failed to load issues'));
+		getIssuesForRepositoryMock.mockRejectedValue(new Error('Failed to load issues'));
 
-		const wrapper = mount(IssueList);
+		const wrapper = mount(IssueList, {
+			props: { repositoryId: 'repo-1' },
+		});
 		await wrapper.vm.$nextTick();
 		await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -60,11 +71,13 @@ describe('IssueList.vue', () => {
 	});
 
 	it('renders empty state when no issues', async () => {
-		vi.mocked(getAllIssues).mockResolvedValue({
-			getAllIssues: [],
+		getIssuesForRepositoryMock.mockResolvedValue({
+			getIssuesForRepository: [],
 		} as any);
 
-		const wrapper = mount(IssueList);
+		const wrapper = mount(IssueList, {
+			props: { repositoryId: 'repo-1' },
+		});
 		await wrapper.vm.$nextTick();
 		await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -79,14 +92,17 @@ describe('IssueList.vue', () => {
 				title: 'Test Issue',
 				status: 'OPEN',
 				createdAt: '2025-01-01T00:00:00Z',
+				repositoryId: 'repo-1',
 			},
 		];
 
-		vi.mocked(getAllIssues).mockResolvedValue({
-			getAllIssues: mockIssues,
+		getIssuesForRepositoryMock.mockResolvedValue({
+			getIssuesForRepository: mockIssues,
 		} as any);
 
-		const wrapper = mount(IssueList);
+		const wrapper = mount(IssueList, {
+			props: { repositoryId: 'repo-1' },
+		});
 		await wrapper.vm.$nextTick();
 		await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -102,20 +118,24 @@ describe('IssueList.vue', () => {
 				title: 'Open Issue',
 				status: 'OPEN',
 				createdAt: '2025-01-01T00:00:00Z',
+				repositoryId: 'repo-1',
 			},
 			{
 				id: 'issue_2',
 				title: 'Closed Issue',
 				status: 'CLOSED',
 				createdAt: '2025-01-02T00:00:00Z',
+				repositoryId: 'repo-1',
 			},
 		];
 
-		vi.mocked(getAllIssues).mockResolvedValue({
-			getAllIssues: mockIssues,
+		getIssuesForRepositoryMock.mockResolvedValue({
+			getIssuesForRepository: mockIssues,
 		} as any);
 
-		const wrapper = mount(IssueList);
+		const wrapper = mount(IssueList, {
+			props: { repositoryId: 'repo-1' },
+		});
 		await wrapper.vm.$nextTick();
 		await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -124,12 +144,27 @@ describe('IssueList.vue', () => {
 	});
 
 	it('handles API errors gracefully', async () => {
-		vi.mocked(getAllIssues).mockRejectedValue(new Error('GraphQL error'));
+		getIssuesForRepositoryMock.mockRejectedValue(new Error('GraphQL error'));
 
-		const wrapper = mount(IssueList);
+		const wrapper = mount(IssueList, {
+			props: { repositoryId: 'repo-1' },
+		});
 		await wrapper.vm.$nextTick();
 		await new Promise((resolve) => setTimeout(resolve, 0));
 
 		expect(wrapper.text()).toContain('GraphQL error');
 	});
+
+	it('prompts for repository when none provided', async () => {
+		const wrapper = mount(IssueList);
+
+		await wrapper.vm.$nextTick();
+
+		expect(wrapper.text()).toContain('Select a repository to view issues');
+	});
 });
+config.global.stubs = {
+	transition: { render: () => null },
+	'transition-group': { render: () => null },
+	teleport: { render: () => null },
+};

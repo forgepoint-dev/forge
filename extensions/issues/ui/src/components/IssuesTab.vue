@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, watch } from 'vue';
+import { getIssuesForRepository, type Issue } from '../lib/client';
 
 const props = defineProps<{
 	repository: {
@@ -11,44 +12,33 @@ const props = defineProps<{
 	};
 }>();
 
-interface Issue {
-	id: string;
-	title: string;
-	status: 'OPEN' | 'IN_PROGRESS' | 'CLOSED';
-	createdAt: string;
-}
-
 const issues = ref<Issue[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
 
-onMounted(async () => {
+async function fetchIssues() {
 	loading.value = true;
 	error.value = null;
 
 	try {
-		await new Promise((resolve) => setTimeout(resolve, 500));
-
-		issues.value = [
-			{
-				id: 'issue-1',
-				title: `Sample issue for ${props.repository.slug}`,
-				status: 'OPEN',
-				createdAt: new Date().toISOString(),
-			},
-			{
-				id: 'issue-2',
-				title: 'Another sample issue',
-				status: 'IN_PROGRESS',
-				createdAt: new Date(Date.now() - 86400000).toISOString(),
-			},
-		];
+		const response = await getIssuesForRepository(props.repository.id);
+		issues.value = response.getIssuesForRepository;
 	} catch (err) {
 		error.value = err instanceof Error ? err.message : 'Failed to load issues';
+		issues.value = [];
 	} finally {
 		loading.value = false;
 	}
-});
+}
+
+onMounted(fetchIssues);
+
+watch(
+	() => props.repository.id,
+	() => {
+		fetchIssues();
+	}
+);
 
 function getStatusColor(status: Issue['status']) {
 	switch (status) {

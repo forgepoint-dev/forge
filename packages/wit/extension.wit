@@ -1,5 +1,5 @@
 // WIT (WebAssembly Interface Types) definition for GraphQL extensions
-package forge:extension@0.1.0;
+package forge:extension@0.2.0;
 
 // The main extension world that defines what the extension can import and export
 world extension {
@@ -78,12 +78,54 @@ interface extension-api {
         custom-config: option<string>,
     }
 
+    // Context scope for the current request
+    enum context-scope {
+        global,
+        repository,
+        user,
+        repository-user,
+    }
+
+    // Repository metadata provided when the request is scoped to a repository
+    record repository-context {
+        id: string,
+        slug: string,
+        group-id: option<string>,
+        full-path: option<string>,
+        is-remote: bool,
+        remote-url: option<string>,
+    }
+
+    // User metadata provided when the request is associated with a signed-in user
+    record user-context {
+        id: string,
+        username: string,
+        display-name: option<string>,
+        email: option<string>,
+    }
+
+    // Global/environment level metadata shared across requests
+    record global-context {
+        installation-id: option<string>,
+        environment: option<string>,
+        feature-flags: list<string>,
+    }
+
+    // Structured request context supplied to extensions for each resolver invocation
+    record request-context {
+        scope: context-scope,
+        repository: option<repository-context>,
+        user: option<user-context>,
+        global: option<global-context>,
+        extra-json: option<string>,
+    }
+
     // GraphQL field resolution
     record resolve-info {
         field-name: string,
         parent-type: string,
         arguments: string, // JSON string
-        context: string,   // JSON string with request context
+        context: request-context,
         parent: option<string>, // JSON string of parent object
     }
 

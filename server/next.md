@@ -18,6 +18,8 @@ This document lays out a step-by-step plan to replace the current async-graphql-
 
 ## Phase 1 – Adopt Hive Router Crates End-to-End
 
+**Status:** ✅ Completed. Hive Router crates now provide the HTTP pipeline and Axum handler (`server/Cargo.toml`, `server/src/api/server.rs`).
+
 Goal: run the actual Hive Router pipeline (normalize → validate → plan → execute) in-process.
 
 1. **Add dependencies (Cargo.toml)**
@@ -43,6 +45,8 @@ Goal: run the actual Hive Router pipeline (normalize → validate → plan → e
 ---
 
 ## Phase 2 – Implement Core Subgraph Executor
+
+**Status:** ✅ Completed. The core planner/executor wiring is live (`server/src/router/mod.rs`, `server/src/router/core_executor.rs`).
 
 Goal: replace the stub with a proper executor for the “core” subgraph (groups, repositories, etc.).
 
@@ -73,6 +77,8 @@ Goal: replace the stub with a proper executor for the “core” subgraph (group
 
 ## Phase 3 – Implement Extension Subgraph Executors
 
+**Status:** 🚧 In progress. Extension execution is wired but representations/`@requires` handling and integration tests are still pending (`server/src/router/extension_executor.rs`, `server/tests/router_pipeline.rs`).
+
 Goal: call WASM extensions as first-class subgraphs.
 
 1. **Define `ExtensionSubgraphExecutor`**
@@ -94,26 +100,28 @@ Goal: call WASM extensions as first-class subgraphs.
 
 ## Phase 4 – Robust SDL Composition
 
+**Status:** ✅ Completed. The `SchemaComposer` now composes via AST transformations and Hive router tooling (`server/src/graphql/schema_composer.rs`).
+
 Goal: generate supergraph SDL from structured data to avoid brittle string replacements.
 
-1. **Model core schema types/fields**
-   - Define Rust structs for types, fields, directives, etc., or reuse `graphql_parser::schema` AST.
-   - Build the core subgraph SDL programmatically.
-2. **Incorporate extension SDL**
-   - Parse each extension’s federation SDL into AST form (`graphql_parser::parse_schema`).
-   - Merge types/fields and attach `@join__type`, `@join__field`, etc., automatically.
-3. **Compose with Hive Router composer (optional)**
-   - If feasible, use Hive’s composer crate to produce the final supergraph SDL rather than manual merging.
-4. **Validate**
-   - After composition, parse the final SDL (`parse_schema`) and ensure it passes Hive Router’s validation before handing it to the planner.
-5. **Snapshot tests**
-   - Write tests that assert the generated supergraph SDL matches expected text for a known set of extensions.
+1. **Model core schema types/fields** ✅
+   - The composer parses the core SDL into the `graphql_parser::schema` AST for structured manipulation.
+2. **Incorporate extension SDL** ✅
+   - Extension fragments are parsed and merged with automatic `@join__*` directives.
+3. **Compose with Hive Router composer (optional)** ⚠️
+   - The current solution leans on Hive’s planner/parser crates; dedicated composer integration remains optional.
+4. **Validate** ✅
+   - The composed SDL is reparsed before handing off to the planner; a unit test asserts the structure.
+5. **Snapshot tests** ✅
+   - A schema composer unit test exercises the AST merge and validates the resulting directives.
 
 **Outcome:** the supergraph SDL is generated deterministically and safely; adding fields is straightforward.
 
 ---
 
 ## Phase 5 – Clean-up & Removal of Legacy Code
+
+**Status:** ⏳ Not started. The temporary `SchemaComposer` remains the active code path inside the router (`server/src/router/mod.rs`).
 
 1. **Delete async-graphql schema and resolvers**
    - Remove `src/graphql/schema.rs`, `extension_resolver.rs`, and any async-graphql dependencies.
@@ -129,6 +137,8 @@ Goal: generate supergraph SDL from structured data to avoid brittle string repla
 ---
 
 ## Phase 6 – Harden & Monitor
+
+**Status:** ⏳ Not started. Broader integration coverage, metrics, and logging have not been implemented yet.
 
 1. **Add full integration test suite**
    - Cover core queries, mutations, extension fields, introspection, error cases, and entity fetches.
@@ -146,8 +156,8 @@ Goal: generate supergraph SDL from structured data to avoid brittle string repla
 
 ## Reference Checklist
 
-- [ ] Hive Router crates integrated; async-graphql handler removed.
-- [ ] Core subgraph executor implemented and tested.
+- [x] Hive Router crates integrated; async-graphql handler removed.
+- [x] Core subgraph executor implemented and tested.
 - [ ] Extension subgraph executors implemented and tested.
 - [ ] Supergraph SDL generated programmatically.
 - [ ] Legacy schema/resolver modules deleted.

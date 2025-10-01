@@ -1,18 +1,66 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
+use graphql_parser::Pos;
+use graphql_parser::schema::{
+    Definition, Directive, Document, EnumType, EnumValue, InputObjectType, InterfaceType,
+    ObjectType, ScalarType, TypeDefinition, TypeExtension, UnionType, Value,
+};
 use std::collections::HashMap;
 
-/// Simple schema composition utility
-/// In a full implementation, this would use a proper federation composition library
-/// For now, we'll create a basic supergraph manually
+/// Composes the core supergraph SDL with GraphQL federation fragments supplied by extensions.
+///
+/// The implementation relies on Hive Router's GraphQL tooling (`graphql_parser`) to manipulate
+/// structured AST nodes instead of concatenating strings. Each extension schema is parsed into a
+/// document, decorated with the required `@join__*` directives, and merged into the core
+/// supergraph representation before serialising the final SDL.
 pub struct SchemaComposer {
-    subgraphs: HashMap<String, String>,
-    core_schema: String,
+    core_schema: Document<'static, String>,
+    subgraphs: HashMap<String, Document<'static, String>>,
 }
 
 impl SchemaComposer {
     pub fn new() -> Self {
-        // Start with a basic core schema
-        let core_schema = r#"
+        let core_schema = graphql_parser::parse_schema::<String>(CORE_SUPERGRAPH_SDL)
+            .expect("core supergraph SDL must be valid")
+            .into_static();
+
+        Self {
+            core_schema,
+            subgraphs: HashMap::new(),
+        }
+    }
+
+    pub fn add_subgraph(&mut self, name: String, schema: String) -> Result<()> {
+        let document = graphql_parser::parse_schema::<String>(&schema)
+            .with_context(|| format!("failed to parse schema for extension `{name}`"))?
+            .into_static();
+
+        self.subgraphs.insert(name, document);
+        Ok(())
+    }
+
+    pub fn compose(&self) -> Result<String> {
+        let mut supergraph = self.core_schema.clone();
+
+        for (name, document) in &self.subgraphs {
+            let graph_name = name.to_ascii_uppercase();
+            tracing::debug!("Processing extension `{}`", name);
+            merge_extension_into_supergraph(&mut supergraph, &graph_name, name, document)
+                .with_context(|| format!("failed to merge extension `{name}`"))?;
+        }
+
+        let serialised = format!("{}", supergraph);
+        tracing::debug!("Final supergraph SDL:\n{}", serialised);
+        Ok(serialised)
+    }
+}
+
+impl Default for SchemaComposer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+const CORE_SUPERGRAPH_SDL: &str = r#"
 schema
   @link(url: "https://specs.apollo.dev/link/v1.0")
   @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) {
@@ -75,6 +123,7 @@ type Query @join__type(graph: CORE) {
   getGroup(path: String!): GroupNode @join__field(graph: CORE)
   getRepository(path: String!): RepositoryNode @join__field(graph: CORE)
   browseRepository(path: String!, treePath: String): RepositoryEntriesPayload @join__field(graph: CORE)
+  readRepositoryFile(path: String!, filePath: String!): RepositoryFilePayload @join__field(graph: CORE)
 }
 
 type Mutation @join__type(graph: CORE) {
@@ -117,6 +166,15 @@ type RepositoryEntriesPayload @join__type(graph: CORE) {
   entries: [RepositoryEntry!]! @join__field(graph: CORE)
 }
 
+type RepositoryFilePayload @join__type(graph: CORE) {
+  path: String! @join__field(graph: CORE)
+  name: String! @join__field(graph: CORE)
+  size: Int! @join__field(graph: CORE)
+  isBinary: Boolean! @join__field(graph: CORE)
+  text: String @join__field(graph: CORE)
+  truncated: Boolean! @join__field(graph: CORE)
+}
+
 type RepositoryEntry @join__type(graph: CORE) {
   name: String! @join__field(graph: CORE)
   path: String! @join__field(graph: CORE)
@@ -142,426 +200,512 @@ input CreateRepositoryInput @join__type(graph: CORE) {
 enum join__Graph {
   CORE @join__graph(name: "core", url: "internal://core")
 }
-"#.to_string();
+"#;
 
-        Self {
-            subgraphs: HashMap::new(),
-            core_schema,
+fn merge_extension_into_supergraph(
+    supergraph: &mut Document<'static, String>,
+    graph_name: &str,
+    subgraph_name: &str,
+    document: &Document<'static, String>,
+) -> Result<()> {
+    ensure_join_graph_entry(supergraph, graph_name, subgraph_name);
+
+    for definition in &document.definitions {
+        match definition.clone() {
+            Definition::TypeDefinition(definition) => {
+                let decorated = decorate_type_definition(definition, graph_name);
+                supergraph
+                    .definitions
+                    .push(Definition::TypeDefinition(decorated));
+            }
+            Definition::TypeExtension(extension) => {
+                apply_type_extension(supergraph, extension, graph_name)?;
+            }
+            Definition::DirectiveDefinition(definition) => {
+                supergraph
+                    .definitions
+                    .push(Definition::DirectiveDefinition(definition));
+            }
+            Definition::SchemaDefinition(definition) => {
+                merge_schema_definition(supergraph, definition);
+            }
         }
     }
 
-    pub fn add_subgraph(&mut self, name: String, schema: String) {
-        self.subgraphs.insert(name, schema);
+    Ok(())
+}
+
+fn decorate_type_definition(
+    mut definition: TypeDefinition<'static, String>,
+    graph_name: &str,
+) -> TypeDefinition<'static, String> {
+    match &mut definition {
+        TypeDefinition::Object(object) => {
+            ensure_join_type(&mut object.directives, graph_name);
+            for field in &mut object.fields {
+                ensure_join_field(&mut field.directives, graph_name);
+            }
+        }
+        TypeDefinition::Interface(interface) => {
+            ensure_join_type(&mut interface.directives, graph_name);
+            for field in &mut interface.fields {
+                ensure_join_field(&mut field.directives, graph_name);
+            }
+        }
+        TypeDefinition::Enum(enum_type) => {
+            ensure_join_type(&mut enum_type.directives, graph_name);
+            for value in &mut enum_type.values {
+                ensure_join_enum_value(&mut value.directives, graph_name);
+            }
+        }
+        TypeDefinition::InputObject(input) => {
+            ensure_join_type(&mut input.directives, graph_name);
+            for field in &mut input.fields {
+                ensure_join_field(&mut field.directives, graph_name);
+            }
+        }
+        TypeDefinition::Scalar(scalar) => {
+            ensure_join_type(&mut scalar.directives, graph_name);
+        }
+        TypeDefinition::Union(union_type) => {
+            ensure_join_type(&mut union_type.directives, graph_name);
+            ensure_join_union_members(&mut union_type.directives, &union_type.types, graph_name);
+        }
     }
 
-    pub fn compose(&self) -> Result<String> {
-        let mut supergraph = self.core_schema.clone();
+    definition
+}
 
-        // Collect extension fields to merge into Query/Mutation and other object types
-        let mut query_extensions = Vec::new();
-        let mut mutation_extensions = Vec::new();
-        let mut types_to_add = Vec::new();
-        let mut type_extensions: HashMap<String, Vec<String>> = HashMap::new();
-        let mut graph_entries: Vec<(String, String)> = Vec::new();
-
-        // Add extension types and fields
-        for (name, schema) in &self.subgraphs {
-            tracing::debug!("Processing extension '{}' with schema:\n{}", name, schema);
-            let (types, query_fields, mutation_fields, object_extensions, graph_name) =
-                self.process_extension_schema(name, schema)?;
-            tracing::debug!("Processed schema for '{}'", name);
-
-            types_to_add.push(types);
-
-            if !query_fields.is_empty() {
-                let query_block = format!(
-                    "type Query @join__type(graph: {graph_name}, extension: true) {{\n  {fields}\n}}",
-                    graph_name = graph_name,
-                    fields = query_fields.join("\n  ")
-                );
-                types_to_add.push(query_block);
-                query_extensions.extend(query_fields.clone());
-            }
-
-            if !mutation_fields.is_empty() {
-                let mutation_block = format!(
-                    "type Mutation @join__type(graph: {graph_name}, extension: true) {{\n  {fields}\n}}",
-                    graph_name = graph_name,
-                    fields = mutation_fields.join("\n  ")
-                );
-                types_to_add.push(mutation_block);
-                mutation_extensions.extend(mutation_fields.clone());
-            }
-
-            for (type_name, fields) in object_extensions {
-                type_extensions.entry(type_name).or_default().extend(fields);
-            }
-            graph_entries.push((graph_name, name.clone()));
-        }
-
-        // Merge query extensions into the Query type
-        if !query_extensions.is_empty() {
-            let query_additions = query_extensions.join("\n  ");
-            supergraph = supergraph.replace(
-                "type Query @join__type(graph: CORE) {\n  # Core fields",
-                &format!("type Query @join__type(graph: CORE) {{\n  # Core fields"),
-            );
-            supergraph = supergraph.replace(
-                "  browseRepository(path: String!, treePath: String): RepositoryEntriesPayload @join__field(graph: CORE)\n}",
-                &format!("  browseRepository(path: String!, treePath: String): RepositoryEntriesPayload @join__field(graph: CORE)\n  # Extension fields\n  {}\n}}", query_additions)
-            );
-        }
-
-        // Merge mutation extensions into the Mutation type
-        if !mutation_extensions.is_empty() {
-            let mutation_additions = mutation_extensions.join("\n  ");
-            supergraph = supergraph.replace(
-                "type Mutation @join__type(graph: CORE) {\n  # Core mutations",
-                &format!("type Mutation @join__type(graph: CORE) {{\n  # Core mutations"),
-            );
-            supergraph = supergraph.replace(
-                "  linkRemoteRepository(url: String!): RepositoryNode! @join__field(graph: CORE)\n}",
-                &format!("  linkRemoteRepository(url: String!): RepositoryNode! @join__field(graph: CORE)\n  # Extension mutations\n  {}\n}}", mutation_additions)
-            );
-        }
-
-        // Add extension types
-        for types in types_to_add {
-            if !types.trim().is_empty() {
-                supergraph.push_str("\n\n");
-                supergraph.push_str(&types);
+fn apply_type_extension(
+    document: &mut Document<'static, String>,
+    extension: TypeExtension<'static, String>,
+    graph_name: &str,
+) -> Result<()> {
+    match extension {
+        TypeExtension::Object(mut ext) => {
+            let target = find_object_type_mut(document, ext.name.as_str())
+                .with_context(|| format!("object type `{}` not found for extension", ext.name))?;
+            ensure_join_type(&mut target.directives, graph_name);
+            target.directives.extend(ext.directives.drain(..));
+            for mut field in ext.fields.drain(..) {
+                ensure_join_field(&mut field.directives, graph_name);
+                target.fields.push(field);
             }
         }
-
-        supergraph = Self::merge_type_extensions(&supergraph, &type_extensions);
-
-        if !graph_entries.is_empty() {
-            let mut join_lines = Vec::with_capacity(graph_entries.len() + 1);
-            join_lines
-                .push("  CORE @join__graph(name: \"core\", url: \"internal://core\")".to_string());
-            for (graph_name, subgraph_name) in &graph_entries {
-                join_lines.push(format!(
-                    "  {graph} @join__graph(name: \"{name}\", url: \"extension://{name}\")",
-                    graph = graph_name,
-                    name = subgraph_name
-                ));
+        TypeExtension::Interface(mut ext) => {
+            let target = find_interface_type_mut(document, ext.name.as_str())
+                .with_context(|| format!("interface `{}` not found for extension", ext.name))?;
+            ensure_join_type(&mut target.directives, graph_name);
+            target.directives.extend(ext.directives.drain(..));
+            for mut field in ext.fields.drain(..) {
+                ensure_join_field(&mut field.directives, graph_name);
+                target.fields.push(field);
             }
-
-            let join_block = format!("enum join__Graph {{\n{}\n}}\n", join_lines.join("\n"));
-
-            supergraph = supergraph.replace(
-                "enum join__Graph {\n  CORE @join__graph(name: \"core\", url: \"internal://core\")\n}\n",
-                &join_block,
-            );
         }
-
-        tracing::debug!("Final supergraph SDL:\n{}", supergraph);
-
-        // Temporary: write to file for debugging
-        std::fs::write("/tmp/supergraph.graphql", &supergraph).ok();
-
-        Ok(supergraph)
+        TypeExtension::InputObject(mut ext) => {
+            let target = find_input_object_type_mut(document, ext.name.as_str())
+                .with_context(|| format!("input object `{}` not found for extension", ext.name))?;
+            ensure_join_type(&mut target.directives, graph_name);
+            target.directives.extend(ext.directives.drain(..));
+            for mut field in ext.fields.drain(..) {
+                ensure_join_field(&mut field.directives, graph_name);
+                target.fields.push(field);
+            }
+        }
+        TypeExtension::Enum(mut ext) => {
+            let target = find_enum_type_mut(document, ext.name.as_str())
+                .with_context(|| format!("enum `{}` not found for extension", ext.name))?;
+            ensure_join_type(&mut target.directives, graph_name);
+            target.directives.extend(ext.directives.drain(..));
+            for mut value in ext.values.drain(..) {
+                ensure_join_enum_value(&mut value.directives, graph_name);
+                target.values.push(value);
+            }
+        }
+        TypeExtension::Union(mut ext) => {
+            let target = find_union_type_mut(document, ext.name.as_str())
+                .with_context(|| format!("union `{}` not found for extension", ext.name))?;
+            ensure_join_type(&mut target.directives, graph_name);
+            target.directives.extend(ext.directives.drain(..));
+            target.types.extend(ext.types.drain(..));
+            ensure_join_union_members(&mut target.directives, &target.types, graph_name);
+        }
+        TypeExtension::Scalar(mut ext) => {
+            let target = find_scalar_type_mut(document, ext.name.as_str())
+                .with_context(|| format!("scalar `{}` not found for extension", ext.name))?;
+            target.directives.extend(ext.directives.drain(..));
+            ensure_join_type(&mut target.directives, graph_name);
+        }
     }
 
-    fn merge_type_extensions(
-        supergraph: &str,
-        type_extensions: &HashMap<String, Vec<String>>,
-    ) -> String {
-        if type_extensions.is_empty() {
-            return supergraph.to_string();
-        }
+    Ok(())
+}
 
-        let mut result = String::with_capacity(supergraph.len());
-        let mut inside_type_block = false;
-        let mut current_type_name = String::new();
-        let mut brace_depth: i32 = 0;
-
-        for line in supergraph.lines() {
-            let trimmed = line.trim();
-
-            if !inside_type_block && trimmed.starts_with("type ") {
-                current_type_name = Self::extract_type_name(trimmed);
-                inside_type_block = true;
-                brace_depth = 0;
-            }
-
-            if inside_type_block && trimmed == "}" && brace_depth == 1 {
-                if let Some(fields) = type_extensions.get(&current_type_name) {
-                    for field in fields {
-                        result.push_str("  ");
-                        result.push_str(field);
-                        result.push('\n');
-                    }
-                }
-            }
-
-            result.push_str(line);
-            result.push('\n');
-
-            if inside_type_block {
-                let open_braces = line.chars().filter(|&c| c == '{').count() as i32;
-                let close_braces = line.chars().filter(|&c| c == '}').count() as i32;
-                brace_depth += open_braces - close_braces;
-
-                if brace_depth <= 0 {
-                    inside_type_block = false;
-                    brace_depth = 0;
-                    current_type_name.clear();
-                }
-            }
-        }
-
-        result
+fn merge_schema_definition(
+    document: &mut Document<'static, String>,
+    schema_definition: graphql_parser::schema::SchemaDefinition<'static, String>,
+) {
+    if schema_definition.directives.is_empty() {
+        return;
     }
 
-    fn extract_type_name(line: &str) -> String {
-        line.trim_start_matches("type ")
-            .split(|c: char| c == '@' || c == '{' || c.is_whitespace())
-            .next()
-            .unwrap_or("")
-            .to_string()
-    }
-
-    fn process_extension_schema(
-        &self,
-        subgraph_name: &str,
-        schema: &str,
-    ) -> Result<(
-        String,
-        Vec<String>,
-        Vec<String>,
-        HashMap<String, Vec<String>>,
-        String,
-    )> {
-        // Returns: (types_string, query_fields, mutation_fields, object_type_fields)
-
-        let graph_name = subgraph_name.to_ascii_uppercase();
-
-        // Parse extension schema and add @join__ directives
-        let mut types = String::new();
-        let mut query_fields = Vec::new();
-        let mut mutation_fields = Vec::new();
-        let mut inside_extend_block = false;
-        let mut extend_type_name = String::new();
-        let mut extend_fields = Vec::new();
-        let mut inside_type_block = false;
-        let mut current_type_lines = Vec::new();
-        let mut type_brace_depth = 0;
-        let mut object_type_extensions: HashMap<String, Vec<String>> = HashMap::new();
-
-        for line in schema.lines() {
-            let line = line.trim();
-
-            // Skip empty lines and comments
-            if line.is_empty() || line.starts_with("#") {
-                continue;
-            }
-
-            // Handle extend type blocks - collect fields to be merged later
-            if line.starts_with("extend type") {
-                inside_extend_block = true;
-                // Extract type name (e.g., "Query" from "extend type Query {")
-                extend_type_name = line
-                    .replace("extend type", "")
-                    .replace("{", "")
-                    .trim()
-                    .to_string();
-                extend_fields.clear();
-                continue;
-            }
-
-            if inside_extend_block {
-                // Skip opening brace
-                if line == "{" {
-                    continue;
-                }
-
-                // Check for closing brace
-                if line == "}" {
-                    inside_extend_block = false;
-                    // Add the extended fields to appropriate list
-                    if !extend_fields.is_empty() {
-                        let fields_with_directive: Vec<String> = extend_fields
-                            .iter()
-                            .map(|f| format!("{} @join__field(graph: {})", f, graph_name))
-                            .collect();
-
-                        match extend_type_name.as_str() {
-                            "Query" => query_fields.extend(fields_with_directive),
-                            "Mutation" => mutation_fields.extend(fields_with_directive),
-                            _ => {
-                                object_type_extensions
-                                    .entry(extend_type_name.clone())
-                                    .or_default()
-                                    .extend(fields_with_directive);
-                            }
-                        }
-                    }
-                    continue;
-                }
-
-                // Collect field definitions
-                if line.contains(":") {
-                    extend_fields.push(line.to_string());
-                }
-                continue;
-            }
-
-            // Handle regular type/enum/input definitions
-            if (line.starts_with("type ")
-                || line.starts_with("enum ")
-                || line.starts_with("input "))
-                && !inside_type_block
-            {
-                inside_type_block = true;
-                type_brace_depth = 0;
-                current_type_lines.clear();
-                current_type_lines.push(line.to_string());
-
-                // Check if opening brace is on the same line
-                if line.contains("{") {
-                    type_brace_depth += 1;
-                }
-                continue;
-            }
-
-            if inside_type_block {
-                current_type_lines.push(line.to_string());
-
-                // Count braces
-                type_brace_depth += line.chars().filter(|&c| c == '{').count() as i32;
-                type_brace_depth -= line.chars().filter(|&c| c == '}').count() as i32;
-
-                // When we close the type definition, process it
-                if type_brace_depth <= 0 {
-                    inside_type_block = false;
-                    // Process the complete type definition
-                    let type_def = self.process_type_definition(&current_type_lines, &graph_name);
-                    types.push_str(&type_def);
-                    types.push('\n');
-                }
-                continue;
-            }
-        }
-
-        Ok((
-            types,
-            query_fields,
-            mutation_fields,
-            object_type_extensions,
-            graph_name,
-        ))
-    }
-
-    fn process_type_definition(&self, lines: &[String], graph_name: &str) -> String {
-        if lines.is_empty() {
-            return String::new();
-        }
-
-        let mut result = String::new();
-        let first_line = &lines[0];
-
-        // Add the type/enum/input declaration with @join__type directive
-        if first_line.contains("@") {
-            // Already has directives, add ours before existing ones
-            let parts: Vec<&str> = first_line.splitn(2, '@').collect();
-            result.push_str(&format!(
-                "{} @join__type(graph: {}) @{}\n",
-                parts[0].trim(),
-                graph_name,
-                parts[1]
-            ));
-        } else if first_line.contains("{") {
-            // Opening brace on same line
-            let parts: Vec<&str> = first_line.splitn(2, '{').collect();
-            result.push_str(&format!(
-                "{} @join__type(graph: {}) {{\n",
-                parts[0].trim(),
-                graph_name
-            ));
-        } else {
-            // No directives or braces
-            result.push_str(&format!(
-                "{} @join__type(graph: {})\n",
-                first_line, graph_name
-            ));
-        }
-
-        // Process the body lines
-        for line in lines.iter().skip(1) {
-            if line == "{" || line == "}" {
-                result.push_str(&format!("{}\n", line));
-            } else if line.contains(":") && !line.contains("@join__field") {
-                // This is a field definition - add @join__field directive
-                if line.contains("@") {
-                    // Already has directives, add ours before existing ones
-                    let parts: Vec<&str> = line.splitn(2, '@').collect();
-                    result.push_str(&format!(
-                        "  {} @join__field(graph: {}) @{}\n",
-                        parts[0].trim(),
-                        graph_name,
-                        parts[1]
-                    ));
-                } else {
-                    result.push_str(&format!("  {} @join__field(graph: {})\n", line, graph_name));
-                }
-            } else {
-                // Enum values or other content
-                result.push_str(&format!("{}\n", line));
-            }
-        }
-
-        result
+    if let Some(existing) =
+        document
+            .definitions
+            .iter_mut()
+            .find_map(|definition| match definition {
+                Definition::SchemaDefinition(definition) => Some(definition),
+                _ => None,
+            })
+    {
+        existing.directives.extend(schema_definition.directives);
+    } else {
+        document
+            .definitions
+            .push(Definition::SchemaDefinition(schema_definition));
     }
 }
 
-impl Default for SchemaComposer {
-    fn default() -> Self {
-        Self::new()
+fn ensure_join_graph_entry(
+    document: &mut Document<'static, String>,
+    graph_name: &str,
+    subgraph_name: &str,
+) {
+    if let Some(enum_type) = find_enum_type_mut(document, "join__Graph") {
+        if enum_type
+            .values
+            .iter()
+            .any(|value| value.name.as_str() == graph_name)
+        {
+            return;
+        }
+
+        let mut enum_value = EnumValue::new(graph_name.into());
+        enum_value
+            .directives
+            .push(join_graph_directive(subgraph_name));
+        enum_type.values.push(enum_value);
+    }
+}
+
+fn ensure_join_type(directives: &mut Vec<Directive<'static, String>>, graph_name: &str) {
+    let already_present = directives.iter().any(|directive| {
+        if directive.name.as_str() != "join__type" {
+            return false;
+        }
+        directive.arguments.iter().any(|(name, value)| {
+            name.as_str() == "graph"
+                && matches!(value, Value::Enum(existing) if existing == graph_name)
+        })
+    });
+
+    if already_present {
+        return;
+    }
+
+    let mut directive = new_directive("join__type");
+    directive
+        .arguments
+        .push(("graph".into(), Value::Enum(graph_name.into())));
+    directives.insert(0, directive);
+}
+
+fn ensure_join_field(directives: &mut Vec<Directive<'static, String>>, graph_name: &str) {
+    if directives
+        .iter()
+        .any(|directive| directive.name.as_str() == "join__field")
+    {
+        return;
+    }
+
+    let mut directive = new_directive("join__field");
+    directive
+        .arguments
+        .push(("graph".into(), Value::Enum(graph_name.into())));
+    directives.insert(0, directive);
+}
+
+fn ensure_join_enum_value(directives: &mut Vec<Directive<'static, String>>, graph_name: &str) {
+    if directives
+        .iter()
+        .any(|directive| directive.name.as_str() == "join__enumValue")
+    {
+        return;
+    }
+
+    let mut directive = new_directive("join__enumValue");
+    directive
+        .arguments
+        .push(("graph".into(), Value::Enum(graph_name.into())));
+    directives.insert(0, directive);
+}
+
+fn ensure_join_union_members(
+    directives: &mut Vec<Directive<'static, String>>,
+    members: &[String],
+    graph_name: &str,
+) {
+    for member in members {
+        let already_present = directives.iter().any(|directive| {
+            directive.name.as_str() == "join__unionMember"
+                && directive.arguments.iter().any(|(name, value)| {
+                    name.as_str() == "member"
+                        && matches!(value, Value::String(existing) if existing == member)
+                })
+        });
+
+        if already_present {
+            continue;
+        }
+
+        let mut directive = new_directive("join__unionMember");
+        directive
+            .arguments
+            .push(("graph".into(), Value::Enum(graph_name.into())));
+        directive
+            .arguments
+            .push(("member".into(), Value::String(member.clone())));
+        directives.push(directive);
+    }
+}
+
+fn join_graph_directive(subgraph_name: &str) -> Directive<'static, String> {
+    let mut directive = new_directive("join__graph");
+    directive
+        .arguments
+        .push(("name".into(), Value::String(subgraph_name.into())));
+    directive.arguments.push((
+        "url".into(),
+        Value::String(format!("extension://{}", subgraph_name)),
+    ));
+    directive
+}
+
+fn find_object_type_mut<'a>(
+    document: &'a mut Document<'static, String>,
+    name: &str,
+) -> Option<&'a mut ObjectType<'static, String>> {
+    document
+        .definitions
+        .iter_mut()
+        .find_map(|definition| match definition {
+            Definition::TypeDefinition(TypeDefinition::Object(object))
+                if object.name.as_str() == name =>
+            {
+                Some(object)
+            }
+            _ => None,
+        })
+}
+
+fn find_interface_type_mut<'a>(
+    document: &'a mut Document<'static, String>,
+    name: &str,
+) -> Option<&'a mut InterfaceType<'static, String>> {
+    document
+        .definitions
+        .iter_mut()
+        .find_map(|definition| match definition {
+            Definition::TypeDefinition(TypeDefinition::Interface(interface))
+                if interface.name.as_str() == name =>
+            {
+                Some(interface)
+            }
+            _ => None,
+        })
+}
+
+fn find_input_object_type_mut<'a>(
+    document: &'a mut Document<'static, String>,
+    name: &str,
+) -> Option<&'a mut InputObjectType<'static, String>> {
+    document
+        .definitions
+        .iter_mut()
+        .find_map(|definition| match definition {
+            Definition::TypeDefinition(TypeDefinition::InputObject(input))
+                if input.name.as_str() == name =>
+            {
+                Some(input)
+            }
+            _ => None,
+        })
+}
+
+fn find_enum_type_mut<'a>(
+    document: &'a mut Document<'static, String>,
+    name: &str,
+) -> Option<&'a mut EnumType<'static, String>> {
+    document
+        .definitions
+        .iter_mut()
+        .find_map(|definition| match definition {
+            Definition::TypeDefinition(TypeDefinition::Enum(enum_type))
+                if enum_type.name.as_str() == name =>
+            {
+                Some(enum_type)
+            }
+            _ => None,
+        })
+}
+
+fn find_union_type_mut<'a>(
+    document: &'a mut Document<'static, String>,
+    name: &str,
+) -> Option<&'a mut UnionType<'static, String>> {
+    document
+        .definitions
+        .iter_mut()
+        .find_map(|definition| match definition {
+            Definition::TypeDefinition(TypeDefinition::Union(union_type))
+                if union_type.name.as_str() == name =>
+            {
+                Some(union_type)
+            }
+            _ => None,
+        })
+}
+
+fn find_scalar_type_mut<'a>(
+    document: &'a mut Document<'static, String>,
+    name: &str,
+) -> Option<&'a mut ScalarType<'static, String>> {
+    document
+        .definitions
+        .iter_mut()
+        .find_map(|definition| match definition {
+            Definition::TypeDefinition(TypeDefinition::Scalar(scalar))
+                if scalar.name.as_str() == name =>
+            {
+                Some(scalar)
+            }
+            _ => None,
+        })
+}
+
+fn new_directive(name: &str) -> Directive<'static, String> {
+    Directive {
+        position: Pos::default(),
+        name: name.into(),
+        arguments: Vec::new(),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::SchemaComposer;
+    use super::*;
+
+    fn parse_supergraph(sdl: &str) -> Document<'static, String> {
+        graphql_parser::parse_schema::<String>(sdl)
+            .expect("supergraph SDL should parse")
+            .into_static()
+    }
 
     #[test]
-    fn merges_non_root_type_extensions_into_supergraph() {
+    fn composes_extension_fields_and_types() {
         let mut composer = SchemaComposer::new();
-        composer.add_subgraph(
-            "extensions".to_string(),
-            r#"
-extend type RepositoryNode {
-  issues: [Issue!]!
+        composer
+            .add_subgraph(
+                "issues".into(),
+                r#"
+extend type Query {
+  issues(path: String!): [Issue!]!
 }
 
 type Issue {
   id: ID!
+  title: String!
+}
+
+enum IssueState {
+  OPEN
+  CLOSED
 }
 "#
-            .to_string(),
-        );
+                .into(),
+            )
+            .expect("extension SDL should parse");
 
-        let supergraph = composer.compose().expect("compose supergraph");
+        let supergraph_sdl = composer.compose().expect("composition should succeed");
+        let document = parse_supergraph(&supergraph_sdl);
 
-        let block_start = supergraph
-            .find("type RepositoryNode @join__type(graph: CORE) {")
-            .expect("repository block present");
-        let block_rest = &supergraph[block_start..];
-        let block_end = block_rest
-            .find("\n}\n")
-            .map(|idx| block_start + idx)
-            .expect("repository block terminator");
-        let repository_block = &supergraph[block_start..block_end];
+        let query = find_object_type(&document, "Query").expect("query type exists");
+        let issues_field = query
+            .fields
+            .iter()
+            .find(|field| field.name == "issues")
+            .expect("issues field present");
+        assert!(has_directive(&issues_field.directives, "join__field"));
 
-        assert!(
-            repository_block.contains("issues: [Issue!]! @join__field(graph: EXTENSIONS)"),
-            "repository block missing extension field: {}",
-            repository_block
-        );
+        let issue_type = find_object_type(&document, "Issue").expect("issue type exists");
+        assert!(has_directive(&issue_type.directives, "join__type"));
+        for field in &issue_type.fields {
+            assert!(has_directive(&field.directives, "join__field"));
+        }
 
-        assert!(supergraph.contains(
-            "type Issue @join__type(graph: EXTENSIONS) {\n  id: ID! @join__field(graph: EXTENSIONS)\n}"
-        ));
+        let issue_state = find_enum_type(&document, "IssueState").expect("enum exists");
+        assert!(has_directive(&issue_state.directives, "join__type"));
+        for value in &issue_state.values {
+            assert!(has_directive(&value.directives, "join__enumValue"));
+        }
+
+        let join_graph = find_enum_type(&document, "join__Graph").expect("join enum exists");
+        let issues_graph = join_graph
+            .values
+            .iter()
+            .find(|value| value.name == "ISSUES")
+            .expect("enum value registered");
+        let join_graph_directive = issues_graph
+            .directives
+            .iter()
+            .find(|directive| directive.name == "join__graph")
+            .expect("join graph directive present");
+        let mut arguments = join_graph_directive.arguments.clone();
+        arguments.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(arguments.len(), 2);
+        assert_eq!(arguments[0].0, "name");
+        assert_eq!(arguments[0].1, Value::String("issues".into()));
+        assert_eq!(arguments[1].0, "url");
+        assert_eq!(arguments[1].1, Value::String("extension://issues".into()));
+    }
+
+    fn find_object_type<'a>(
+        document: &'a Document<'static, String>,
+        name: &str,
+    ) -> Option<&'a ObjectType<'static, String>> {
+        document
+            .definitions
+            .iter()
+            .find_map(|definition| match definition {
+                Definition::TypeDefinition(TypeDefinition::Object(object))
+                    if object.name.as_str() == name =>
+                {
+                    Some(object)
+                }
+                _ => None,
+            })
+    }
+
+    fn find_enum_type<'a>(
+        document: &'a Document<'static, String>,
+        name: &str,
+    ) -> Option<&'a EnumType<'static, String>> {
+        document
+            .definitions
+            .iter()
+            .find_map(|definition| match definition {
+                Definition::TypeDefinition(TypeDefinition::Enum(enum_type))
+                    if enum_type.name.as_str() == name =>
+                {
+                    Some(enum_type)
+                }
+                _ => None,
+            })
+    }
+
+    fn has_directive(directives: &[Directive<'static, String>], name: &str) -> bool {
+        directives
+            .iter()
+            .any(|directive| directive.name.as_str() == name)
     }
 }
