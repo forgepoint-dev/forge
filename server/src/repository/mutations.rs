@@ -85,3 +85,43 @@ pub async fn link_remote_repository_raw(
         remote_url: Some(normalized_url),
     })
 }
+
+pub async fn clone_repository_raw(
+    pool: &SqlitePool,
+    storage: &RepositoryStorage,
+    url: String,
+) -> anyhow::Result<RepositoryRecord> {
+    let (normalized_url, slug) = normalize_remote_repository(&url)?;
+
+    if remote_url_exists(pool, &normalized_url).await? {
+        return Err(anyhow::anyhow!("remote repository already linked"));
+    }
+
+    validate_slug(&slug)?;
+
+    if slug_conflicts_for_repository(pool, None, &slug).await? {
+        return Err(anyhow::anyhow!("slug already exists at the root"));
+    }
+
+    let id = cuid2::create_id();
+    sqlx::query(
+        "INSERT INTO repositories (id, slug, \"group\", remote_url) VALUES (?, ?, NULL, ?)",
+    )
+    .bind(&id)
+    .bind(&slug)
+    .bind(&normalized_url)
+    .execute(pool)
+    .await?;
+
+    let record = RepositoryRecord {
+        id,
+        slug,
+        group_id: None,
+        remote_url: Some(normalized_url),
+    };
+
+    // Immediately clone the repository
+    storage.ensure_remote_repository(&record).await?;
+
+    Ok(record)
+}

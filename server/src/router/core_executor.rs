@@ -21,7 +21,7 @@ use crate::repository::{
         RepositoryBranch, RepositoryEntriesPayload, RepositoryEntryKind, RepositoryEntryNode,
         RepositoryFilePayload, RepositoryRecord, RepositorySummary,
     },
-    mutations::{CreateRepositoryInput, create_repository_raw, link_remote_repository_raw},
+    mutations::{CreateRepositoryInput, clone_repository_raw, create_repository_raw, link_remote_repository_raw},
     queries::{
         browse_repository_raw, get_all_repositories_raw, get_repository_raw,
         list_repository_branches_raw, read_repository_file_raw,
@@ -347,6 +347,16 @@ impl CoreSubgraphExecutor {
                     .ok_or_else(|| anyhow!("url argument must be a string"))?
                     .to_string();
                 let record = link_remote_repository_raw(&self.pool, &self.storage, url).await?;
+                self.project_repository_node(&record, &field.selection_set, fragments)
+                    .await
+            }
+            "cloneRepository" => {
+                let url_value = self.get_required_argument(field, "url", variables)?;
+                let url = url_value
+                    .as_str()
+                    .ok_or_else(|| anyhow!("url argument must be a string"))?
+                    .to_string();
+                let record = clone_repository_raw(&self.pool, &self.storage, url).await?;
                 self.project_repository_node(&record, &field.selection_set, fragments)
                     .await
             }

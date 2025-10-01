@@ -132,6 +132,7 @@ type Mutation @join__type(graph: CORE) {
   createGroup(input: CreateGroupInput!): GroupNode! @join__field(graph: CORE)
   createRepository(input: CreateRepositoryInput!): RepositoryNode! @join__field(graph: CORE)
   linkRemoteRepository(url: String!): RepositoryNode! @join__field(graph: CORE)
+  cloneRepository(url: String!): RepositoryNode! @join__field(graph: CORE)
 }
 
 # Core types
