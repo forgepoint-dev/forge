@@ -18,6 +18,10 @@ impl RepositoryStorage {
         }
     }
 
+    pub fn get_repository_path(&self, repository_id: &str) -> PathBuf {
+        self.local_root.join(repository_id)
+    }
+
     pub fn ensure_local_repository(&self, segments: &[String]) -> anyhow::Result<PathBuf> {
         let mut path = self.local_root.clone();
         for segment in segments {
