@@ -89,6 +89,7 @@ export const getIssuesForRepository = async (repositoryId: string) => {
 		query GetIssuesForRepository($repositoryId: ID!) {
 			getIssuesForRepository(repositoryId: $repositoryId) {
 				id
+				number
 				title
 				description
 				status
@@ -110,11 +111,12 @@ export const getIssuesForRepository = async (repositoryId: string) => {
 	}, { repositoryId: string }>(query, { repositoryId });
 };
 
-export const getIssue = async (repositoryId: string, id: string) => {
+export const getIssue = async (repositoryId: string, issueNumber: number) => {
 	const query = `
-		query GetIssue($repositoryId: ID!, $id: ID!) {
-			getIssue(repositoryId: $repositoryId, id: $id) {
+		query GetIssue($repositoryId: ID!, $issueNumber: Int!) {
+			getIssue(repositoryId: $repositoryId, issueNumber: $issueNumber) {
 				id
+				number
 				title
 				description
 				status
@@ -127,22 +129,68 @@ export const getIssue = async (repositoryId: string, id: string) => {
 	return client<{
 		getIssue: {
 			id: string;
+			number: number;
 			title: string;
 			description: string | null;
 			status: string;
 			createdAt: string;
 			repositoryId: string;
 		} | null;
-	}, { repositoryId: string; id: string }>(query, { repositoryId, id });
+	}, { repositoryId: string; issueNumber: number }>(query, { repositoryId, issueNumber });
 };
 
 export type IssueStatus = 'OPEN' | 'CLOSED' | 'IN_PROGRESS';
 
 export interface Issue {
 	id: string;
+	number: number;
 	title: string;
 	description: string | null;
 	status: IssueStatus;
 	createdAt: string;
 	repositoryId: string;
 }
+
+export const getRepositoryByPath = async (path: string) => {
+	const query = `
+		query GetRepositoryByPath($path: String!) {
+			getRepository(path: $path) {
+				id
+				slug
+			}
+		}
+	`;
+
+	return client<{
+		getRepository: {
+			id: string;
+			slug: string;
+		} | null;
+	}, { path: string }>(query, { path });
+};
+
+export const createIssue = async (
+	repositoryId: string,
+	input: { title: string; description?: string | null },
+) => {
+	const mutation = `
+		mutation CreateIssue($repositoryId: ID!, $input: CreateIssueInput!) {
+			createIssue(repositoryId: $repositoryId, input: $input) {
+				id
+				number
+				title
+				description
+				status
+				createdAt
+				repositoryId
+			}
+		}
+	`;
+
+	return client<{
+		createIssue: Issue;
+	}, { repositoryId: string; input: { title: string; description?: string | null } }>(mutation, {
+		repositoryId,
+		input,
+	});
+};

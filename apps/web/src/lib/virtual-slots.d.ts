@@ -35,3 +35,9 @@ declare module 'virtual:forge/slots/homepage-widgets' {
 
 	export const homepageWidgets: HomepageWidgetSlot[];
 }
+
+declare module 'virtual:forge/slots/actions' {
+	import type { ActionSlot } from './slots';
+
+	export const actionSlots: ActionSlot[];
+}

@@ -1,7 +1,31 @@
 ---
 import IssueList from '../components/IssueList.vue';
 
+const repoParam = (Astro.params as any).repo;
+const repositoryPathFromParams = Array.isArray(repoParam)
+	? repoParam.join('/')
+	: typeof repoParam === 'string'
+		? repoParam
+		: undefined;
+
 const repositoryId = Astro.url.searchParams.get('repositoryId') ?? undefined;
+const repositoryPath = repositoryPathFromParams ?? Astro.url.searchParams.get('repositoryPath') ?? undefined;
+const encodedRepositoryId = repositoryId ? encodeURIComponent(repositoryId) : undefined;
+const encodedRepositoryPath = repositoryPath ? encodeURIComponent(repositoryPath) : undefined;
+
+const showNewIssueButton = Boolean(repositoryId || repositoryPath);
+const newIssueHref = (() => {
+	if (repositoryPath) {
+		const sanitized = repositoryPath.replace(/^\/+|\/+$/g, '');
+		return `/${sanitized}/issues/new`;
+	}
+
+	if (encodedRepositoryId) {
+		return `/issues/new?repositoryId=${encodedRepositoryId}`;
+	}
+
+	return '/issues/new';
+})();
 ---
 
 <html lang="en">
@@ -10,9 +34,20 @@ const repositoryId = Astro.url.searchParams.get('repositoryId') ?? undefined;
 		<meta name="viewport" content="width=device-width" />
 		<title>Issues - Forge</title>
 	</head>
-	<body>
-		<div class="container mx-auto px-4 py-8">
-			<IssueList client:load repository-id={repositoryId} />
-		</div>
-	</body>
+<body class="min-h-screen bg-background text-foreground">
+	<div class="mx-auto max-w-5xl px-4 py-8 space-y-6">
+		<header class="flex items-center justify-between">
+			<h1 class="text-3xl font-bold">Issues</h1>
+			{showNewIssueButton && (
+				<a
+					href={newIssueHref}
+					class="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition hover:bg-primary/90"
+				>
+					New Issue
+				</a>
+			)}
+		</header>
+		<IssueList client:load repository-id={repositoryId} repository-path={repositoryPath} />
+	</div>
+</body>
 </html>

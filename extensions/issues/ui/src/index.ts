@@ -23,6 +23,15 @@ interface SlotRegistry {
 		componentPath: string;
 		order?: number;
 	}>;
+	actions: Array<{
+		id: string;
+		label: string;
+		scope: 'dashboard' | 'repository';
+		order?: number;
+		kind?: 'link' | 'handler';
+		href?: string;
+		handlerPath?: string;
+	}>;
 }
 
 export interface IssuesIntegrationOptions {
@@ -39,6 +48,22 @@ export default function issuesIntegration(options?: IssuesIntegrationOptions): A
 					entrypoint: resolve(__dirname, './pages/IssueList.astro'),
 				});
 				injectRoute({
+					pattern: '/[...repo]/issues',
+					entrypoint: resolve(__dirname, './pages/IssueList.astro'),
+				});
+				injectRoute({
+					pattern: '/issues/new',
+					entrypoint: resolve(__dirname, './pages/NewIssue.astro'),
+				});
+				injectRoute({
+					pattern: '/[...repo]/issues/new',
+					entrypoint: resolve(__dirname, './pages/NewIssue.astro'),
+				});
+				injectRoute({
+					pattern: '/[...repo]/issues/[number]',
+					entrypoint: resolve(__dirname, './pages/IssueDetail.astro'),
+				});
+				injectRoute({
 					pattern: '/issues/[id]',
 					entrypoint: resolve(__dirname, './pages/IssueDetail.astro'),
 				});
@@ -49,6 +74,14 @@ export default function issuesIntegration(options?: IssuesIntegrationOptions): A
 						label: 'Issues',
 						componentPath: resolve(__dirname, './components/IssuesTab.vue'),
 						order: 10,
+					});
+					options.slotRegistry.actions.push({
+						id: 'issues.new',
+						label: 'New Issue',
+						scope: 'repository',
+						order: 20,
+						kind: 'link',
+						href: '/{repository.fullPath}/issues/new',
 					});
 				}
 			},

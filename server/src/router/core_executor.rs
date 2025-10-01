@@ -18,13 +18,13 @@ use crate::group::{
 };
 use crate::repository::{
     models::{
-        RepositoryEntriesPayload, RepositoryEntryKind, RepositoryEntryNode, RepositoryFilePayload,
-        RepositoryRecord, RepositorySummary,
+        RepositoryBranch, RepositoryEntriesPayload, RepositoryEntryKind, RepositoryEntryNode,
+        RepositoryFilePayload, RepositoryRecord, RepositorySummary,
     },
     mutations::{CreateRepositoryInput, create_repository_raw, link_remote_repository_raw},
     queries::{
         browse_repository_raw, get_all_repositories_raw, get_repository_raw,
-        read_repository_file_raw,
+        list_repository_branches_raw, read_repository_file_raw,
     },
     storage::RepositoryStorage,
 };
@@ -250,14 +250,41 @@ impl CoreSubgraphExecutor {
                 let tree_path = self
                     .get_optional_argument(field, "treePath", variables)?
                     .and_then(|v| v.as_str().map(|s| s.to_string()));
+                let branch = self
+                    .get_optional_argument(field, "branch", variables)?
+                    .and_then(|v| v.as_str().map(|s| s.to_string()));
                 let payload =
-                    browse_repository_raw(&self.pool, &self.storage, path, tree_path).await?;
+                    browse_repository_raw(&self.pool, &self.storage, path, tree_path, branch)
+                        .await?;
                 match payload {
                     Some(payload) => self.project_repository_entries_payload(
                         &payload,
                         &field.selection_set,
                         fragments,
                     ),
+                    None => Ok(JsonValue::Null),
+                }
+            }
+            "listRepositoryBranches" => {
+                let path = self
+                    .get_required_argument(field, "path", variables)?
+                    .as_str()
+                    .ok_or_else(|| anyhow!("path argument must be a string"))?
+                    .to_string();
+                let branches =
+                    list_repository_branches_raw(&self.pool, &self.storage, path).await?;
+                match branches {
+                    Some(branches) => {
+                        let mut items = Vec::with_capacity(branches.len());
+                        for branch in branches {
+                            items.push(self.project_repository_branch(
+                                &branch,
+                                &field.selection_set,
+                                fragments,
+                            )?);
+                        }
+                        Ok(JsonValue::Array(items))
+                    }
                     None => Ok(JsonValue::Null),
                 }
             }
@@ -272,8 +299,12 @@ impl CoreSubgraphExecutor {
                     .as_str()
                     .ok_or_else(|| anyhow!("filePath argument must be a string"))?
                     .to_string();
+                let branch = self
+                    .get_optional_argument(field, "branch", variables)?
+                    .and_then(|v| v.as_str().map(|s| s.to_string()));
                 let payload =
-                    read_repository_file_raw(&self.pool, &self.storage, path, file_path).await?;
+                    read_repository_file_raw(&self.pool, &self.storage, path, file_path, branch)
+                        .await?;
                 match payload {
                     Some(payload) => self.project_repository_file_payload(
                         &payload,
@@ -519,6 +550,32 @@ impl CoreSubgraphExecutor {
                     Some(url) => JsonValue::String(url.clone()),
                     None => JsonValue::Null,
                 },
+                _ => JsonValue::Null,
+            };
+            map.insert(key, value);
+        }
+        Ok(JsonValue::Object(map))
+    }
+
+    fn project_repository_branch<'a>(
+        &self,
+        branch: &RepositoryBranch,
+        selection_set: &'a SelectionSet<'a, String>,
+        fragments: &FragmentMap<'a>,
+    ) -> Result<JsonValue> {
+        let mut map = Map::new();
+        let fields = selection_fields(selection_set, "RepositoryBranch", fragments)?;
+        for field in fields {
+            let key = response_key(field);
+            let value = match field.name.as_str() {
+                "__typename" => JsonValue::String("RepositoryBranch".to_string()),
+                "name" => JsonValue::String(branch.name.clone()),
+                "reference" => JsonValue::String(branch.reference.clone()),
+                "target" => match &branch.target {
+                    Some(target) => JsonValue::String(target.clone()),
+                    None => JsonValue::Null,
+                },
+                "isDefault" => JsonValue::Bool(branch.is_default),
                 _ => JsonValue::Null,
             };
             map.insert(key, value);

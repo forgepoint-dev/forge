@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue';
-import { getIssuesForRepository, type Issue } from '../lib/client';
+import { getIssuesForRepository, getRepositoryByPath, type Issue } from '../lib/client';
 
 const props = defineProps<{
 	repositoryId?: string;
+	repositoryPath?: string;
 }>();
 
 const issues = ref<Issue[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
+const resolvedRepositoryId = ref<string | null>(props.repositoryId ?? null);
 
 async function fetchIssues(repositoryId: string) {
 	loading.value = true;
@@ -29,77 +31,119 @@ function resetState() {
 	issues.value = [];
 	loading.value = false;
 	error.value = null;
+	resolvedRepositoryId.value = null;
 }
 
-onMounted(() => {
+async function ensureRepositoryId(): Promise<string | null> {
 	if (props.repositoryId) {
-		fetchIssues(props.repositoryId);
-	} else {
-		resetState();
+		resolvedRepositoryId.value = props.repositoryId;
+		return props.repositoryId;
 	}
-});
+
+	const rawPath = props.repositoryPath?.trim();
+	const path = rawPath ? rawPath.replace(/^\/+|\/+$/g, '') : rawPath;
+	if (!path) {
+		resolvedRepositoryId.value = null;
+		return null;
+	}
+
+	try {
+		const response = await getRepositoryByPath(path);
+		const repository = response.getRepository;
+		if (repository) {
+			resolvedRepositoryId.value = repository.id;
+			return repository.id;
+		}
+		resolvedRepositoryId.value = null;
+		error.value = `Repository "${path}" was not found.`;
+		return null;
+	} catch (err) {
+		resolvedRepositoryId.value = null;
+		error.value = err instanceof Error ? err.message : 'Failed to resolve repository';
+		return null;
+	}
+}
+
+async function loadIssues() {
+	loading.value = true;
+	error.value = null;
+
+	const repositoryId = await ensureRepositoryId();
+	if (!repositoryId) {
+		resetState();
+		loading.value = false;
+		return;
+	}
+
+	await fetchIssues(repositoryId);
+}
+
+onMounted(loadIssues);
 
 watch(
-	() => props.repositoryId,
-	(newRepositoryId) => {
-		if (newRepositoryId) {
-			fetchIssues(newRepositoryId);
-		} else {
-			resetState();
-		}
+	() => [props.repositoryId, props.repositoryPath],
+	() => {
+		loadIssues();
 	}
 );
 </script>
 
 <template>
-	<div class="issues-list">
-		<h2 class="text-2xl font-bold mb-4">Issues</h2>
+	<div class="space-y-4 text-sm">
+		<h2 class="text-2xl font-semibold text-foreground">Issues</h2>
 		
-		<div v-if="loading" class="text-gray-600">
-			Loading issues...
-		</div>
+		<div v-if="loading" class="text-muted-foreground">Loading issues…</div>
 		
-		<div v-else-if="error" class="text-red-600 bg-red-50 p-4 rounded">
+		<div
+			v-else-if="error"
+			class="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-destructive"
+		>
 			{{ error }}
 		</div>
 
-		<div v-else-if="!props.repositoryId" class="text-gray-600">
+		<div v-else-if="!props.repositoryId" class="rounded-md border border-border bg-muted/40 px-4 py-3 text-muted-foreground">
 			Select a repository to view issues.
 		</div>
 		
-		<div v-else-if="issues.length === 0" class="text-gray-600">
-			No issues found.
+		<div v-else-if="issues.length === 0" class="rounded-md border border-border bg-muted/40 px-4 py-3 text-muted-foreground">
+			No issues found for this repository.
 		</div>
 		
 		<ul v-else class="space-y-2">
-			<li 
-				v-for="issue in issues" 
+			<li
+				v-for="issue in issues"
 				:key="issue.id"
-				class="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-colors"
+				class="rounded-lg border border-border bg-card transition hover:bg-accent/40"
 			>
-				<a 
-					:href="`/issues/${issue.id}`"
-					class="block"
+				<a
+					:href="
+						props.repositoryPath
+							? `/${props.repositoryPath}/issues/${issue.number}`
+							: props.repositoryId
+								? `/issues/${issue.id}?repositoryId=${encodeURIComponent(props.repositoryId)}`
+								: `/issues/${issue.id}`
+					"
+					class="block px-4 py-3"
 				>
-					<div class="flex items-center justify-between">
-						<h3 class="text-lg font-semibold text-blue-600 hover:text-blue-800">
-							{{ issue.title }}
+					<div class="flex items-center justify-between gap-3">
+						<h3 class="text-base font-semibold text-foreground hover:text-primary">
+							#{{ issue.number }} · {{ issue.title }}
 						</h3>
-						<span 
-							class="px-2 py-1 rounded text-sm"
+						<span
+							class="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium"
 							:class="{
-								'bg-green-100 text-green-800': issue.status === 'OPEN',
-								'bg-gray-100 text-gray-800': issue.status === 'CLOSED',
-								'bg-yellow-100 text-yellow-800': issue.status === 'IN_PROGRESS'
+								'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300': issue.status === 'OPEN',
+								'border-slate-500/40 bg-slate-500/10 text-slate-700 dark:text-slate-300': issue.status === 'CLOSED',
+								'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300': issue.status === 'IN_PROGRESS'
 							}"
 						>
-							{{ issue.status }}
+							{{ issue.status.replace('_', ' ') }}
 						</span>
 					</div>
-					<p v-if="issue.description" class="text-gray-600 mt-2">
+					<p v-if="issue.description" class="mt-2 text-sm text-muted-foreground">
 						{{ issue.description }}
 					</p>
-					<p class="text-sm text-gray-400 mt-2">
+					<p class="mt-2 text-xs text-muted-foreground">
 						Created: {{ new Date(issue.createdAt).toLocaleDateString() }}
 					</p>
 				</a>

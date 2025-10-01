@@ -20,6 +20,26 @@ export interface HomepageWidgetSlot {
 	order?: number;
 }
 
+export type ActionScope = 'dashboard' | 'repository';
+
+export interface ActionContext {
+	scope: ActionScope;
+	repository?: RepositoryContext;
+	navigate: (path: string) => void;
+}
+
+export type ActionHandler = (context: ActionContext) => void | Promise<void>;
+
+export interface ActionSlot {
+	id: string;
+	label: string;
+	scope: ActionScope;
+	order?: number;
+	kind: 'link' | 'handler';
+	href?: string;
+	handler?: ActionHandler;
+}
+
 export interface RepositoryContext {
 	version: 1;
 	id: string;

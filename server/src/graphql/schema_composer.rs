@@ -122,8 +122,9 @@ type Query @join__type(graph: CORE) {
   getAllRepositories: [RepositoryNode!]! @join__field(graph: CORE)
   getGroup(path: String!): GroupNode @join__field(graph: CORE)
   getRepository(path: String!): RepositoryNode @join__field(graph: CORE)
-  browseRepository(path: String!, treePath: String): RepositoryEntriesPayload @join__field(graph: CORE)
-  readRepositoryFile(path: String!, filePath: String!): RepositoryFilePayload @join__field(graph: CORE)
+  browseRepository(path: String!, treePath: String, branch: String): RepositoryEntriesPayload @join__field(graph: CORE)
+  listRepositoryBranches(path: String!): [RepositoryBranch!] @join__field(graph: CORE)
+  readRepositoryFile(path: String!, filePath: String!, branch: String): RepositoryFilePayload @join__field(graph: CORE)
 }
 
 type Mutation @join__type(graph: CORE) {
@@ -180,6 +181,13 @@ type RepositoryEntry @join__type(graph: CORE) {
   path: String! @join__field(graph: CORE)
   type: EntryType! @join__field(graph: CORE)
   size: Int @join__field(graph: CORE)
+}
+
+type RepositoryBranch @join__type(graph: CORE) {
+  name: String! @join__field(graph: CORE)
+  reference: String! @join__field(graph: CORE)
+  target: String @join__field(graph: CORE)
+  isDefault: Boolean! @join__field(graph: CORE)
 }
 
 enum EntryType @join__type(graph: CORE) {

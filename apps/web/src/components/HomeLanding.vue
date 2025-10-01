@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import UiInput from './ui/input.vue'
+import UiButton from './ui/button.vue'
+import CreateRepositoryModal from './CreateRepositoryModal.vue'
+import LinkRepositoryModal from './LinkRepositoryModal.vue'
 import { graphqlRequest } from '../lib/graphql'
-import { CreateRepositoryDialog, LinkRepositoryDialog, Button } from 'design'
 
 type GroupNode = {
   id: string
@@ -189,12 +191,12 @@ onMounted(async () => {
         <div class="flex items-center justify-between mb-6">
           <h2 class="text-2xl font-semibold">Repositories</h2>
           <div class="flex gap-2">
-            <Button @click="showCreateDialog = true">
+            <UiButton @click="showCreateDialog = true">
               Create Repository
-            </Button>
-            <Button variant="outline" @click="showLinkDialog = true">
+            </UiButton>
+            <UiButton variant="outline" @click="showLinkDialog = true">
               Link Repository
-            </Button>
+            </UiButton>
           </div>
         </div>
         <div class="grid gap-3">
@@ -232,12 +234,12 @@ onMounted(async () => {
     </section>
 
     <!-- Dialogs -->
-    <CreateRepositoryDialog 
+    <CreateRepositoryModal 
       v-model:open="showCreateDialog" 
       :groups="groups"
       @create="createRepository"
     />
-    <LinkRepositoryDialog 
+    <LinkRepositoryModal 
       v-model:open="showLinkDialog" 
       @link="linkRepository"
     />

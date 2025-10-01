@@ -9,7 +9,7 @@ const props = defineProps<{
 
 const componentError = ref<string | null>(null);
 
-const activeTab = ref<string>(repoTabs[0]?.id || 'files');
+const activeTab = ref<string>('files');
 
 const tabs = computed(() => [
 	{ id: 'files', label: 'Files' },

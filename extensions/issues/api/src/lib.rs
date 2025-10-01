@@ -4,7 +4,9 @@
 
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde_json::json;
+use std::collections::HashMap;
 
 wit_bindgen::generate!({
     world: "extension",
@@ -19,16 +21,15 @@ use forge::extension::host_log::{self, LogLevel};
 
 const SCHEMA: &str = include_str!("../../shared/schema.graphql");
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug, Clone)]
 struct Issue {
-    id: String,
+    db_id: String,
+    repository_id: String,
+    number: i64,
     title: String,
     description: Option<String>,
     status: String,
-    #[serde(rename = "createdAt")]
     created_at: String,
-    #[serde(rename = "repositoryId")]
-    repository_id: String,
 }
 
 #[derive(Deserialize)]
@@ -141,7 +142,7 @@ fn resolve_get_issues_for_repository(
         return ResolveResult::Error(err);
     }
 
-    let sql = "SELECT id, repository_id, title, description, status, created_at FROM issues WHERE repository_id = ? ORDER BY created_at DESC";
+    let sql = "SELECT id, repository_id, number, title, description, status, created_at FROM issues WHERE repository_id = ? ORDER BY number DESC";
     let params = vec![RecordValue::Text(args.repository_id.clone())];
 
     match host_database::query(sql, &params) {
@@ -163,7 +164,8 @@ fn resolve_get_issue(arguments: &str, context_repository: Option<&str>) -> Resol
     struct Args {
         #[serde(rename = "repositoryId")]
         repository_id: String,
-        id: String,
+        #[serde(rename = "issueNumber")]
+        issue_number: i64,
     }
 
     let args: Args = match serde_json::from_str(arguments) {
@@ -175,7 +177,7 @@ fn resolve_get_issue(arguments: &str, context_repository: Option<&str>) -> Resol
         return ResolveResult::Error(err);
     }
 
-    match query_issue_by_id(&args.repository_id, &args.id) {
+    match query_issue_by_number(&args.repository_id, args.issue_number) {
         Ok(Some(issue)) => serialize_issue(issue),
         Ok(None) => ResolveResult::Success("null".to_string()),
         Err(err) => ResolveResult::Error(err),
@@ -199,13 +201,19 @@ fn resolve_create_issue(arguments: &str, context_repository: Option<&str>) -> Re
         return ResolveResult::Error(err);
     }
 
-    let id = format!("issue_{}", chrono::Utc::now().timestamp());
+    let number = match next_issue_number(&args.repository_id) {
+        Ok(num) => num,
+        Err(err) => return ResolveResult::Error(err),
+    };
+
+    let db_id = format!("issue_{}_{}", chrono::Utc::now().timestamp_millis(), number);
     let created_at = chrono::Utc::now().to_rfc3339();
 
-    let sql = "INSERT INTO issues (id, repository_id, title, description, status, created_at) VALUES (?, ?, ?, ?, ?, ?)";
+    let sql = "INSERT INTO issues (id, repository_id, number, title, description, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)";
     let params = vec![
-        RecordValue::Text(id.clone()),
+        RecordValue::Text(db_id.clone()),
         RecordValue::Text(args.repository_id.clone()),
+        RecordValue::Integer(number),
         RecordValue::Text(args.input.title.clone()),
         match &args.input.description {
             Some(d) => RecordValue::Text(d.clone()),
@@ -218,12 +226,13 @@ fn resolve_create_issue(arguments: &str, context_repository: Option<&str>) -> Re
     match host_database::execute(sql, &params) {
         host_database::ExecResult::Success(_) => {
             let issue = Issue {
-                id,
+                db_id,
+                repository_id: args.repository_id,
+                number,
                 title: args.input.title,
                 description: args.input.description,
                 status: "OPEN".to_string(),
                 created_at,
-                repository_id: args.repository_id,
             };
             serialize_issue(issue)
         }
@@ -238,7 +247,8 @@ fn resolve_update_issue(arguments: &str, context_repository: Option<&str>) -> Re
     struct Args {
         #[serde(rename = "repositoryId")]
         repository_id: String,
-        id: String,
+        #[serde(rename = "issueNumber")]
+        issue_number: i64,
         input: UpdateIssueInput,
     }
 
@@ -272,11 +282,11 @@ fn resolve_update_issue(arguments: &str, context_repository: Option<&str>) -> Re
     }
 
     let sql = format!(
-        "UPDATE issues SET {} WHERE id = ? AND repository_id = ?",
+        "UPDATE issues SET {} WHERE repository_id = ? AND number = ?",
         updates.join(", ")
     );
-    params.push(RecordValue::Text(args.id.clone()));
     params.push(RecordValue::Text(args.repository_id.clone()));
+    params.push(RecordValue::Integer(args.issue_number));
 
     match host_database::execute(&sql, &params) {
         host_database::ExecResult::Success(info) => {
@@ -284,7 +294,7 @@ fn resolve_update_issue(arguments: &str, context_repository: Option<&str>) -> Re
                 return ResolveResult::Success("null".to_string());
             }
 
-            match query_issue_by_id(&args.repository_id, &args.id) {
+            match query_issue_by_number(&args.repository_id, args.issue_number) {
                 Ok(Some(issue)) => serialize_issue(issue),
                 Ok(None) => ResolveResult::Success("null".to_string()),
                 Err(err) => ResolveResult::Error(err),
@@ -297,43 +307,18 @@ fn resolve_update_issue(arguments: &str, context_repository: Option<&str>) -> Re
 }
 
 fn serialize_issues(issues: Vec<Issue>) -> ResolveResult {
-    match serde_json::to_string(&issues) {
+    let payload: Vec<_> = issues.iter().map(issue_to_json).collect();
+    match serde_json::to_string(&payload) {
         Ok(json) => ResolveResult::Success(json),
         Err(e) => ResolveResult::Error(format!("Serialization error: {}", e)),
     }
 }
 
 fn serialize_issue(issue: Issue) -> ResolveResult {
-    match serde_json::to_string(&issue) {
+    let payload = issue_to_json(&issue);
+    match serde_json::to_string(&payload) {
         Ok(json) => ResolveResult::Success(json),
         Err(e) => ResolveResult::Error(format!("Serialization error: {}", e)),
-    }
-}
-
-fn issue_from_values(values: &[RecordValue]) -> Issue {
-    Issue {
-        id: extract_string(&values[0]),
-        repository_id: extract_string(&values[1]),
-        title: extract_string(&values[2]),
-        description: extract_optional_string(&values[3]),
-        status: extract_string(&values[4]),
-        created_at: extract_string(&values[5]),
-    }
-}
-
-fn query_issue_by_id(repository_id: &str, id: &str) -> Result<Option<Issue>, String> {
-    let sql = "SELECT id, repository_id, title, description, status, created_at FROM issues WHERE repository_id = ? AND id = ?";
-    let params = vec![
-        RecordValue::Text(repository_id.to_string()),
-        RecordValue::Text(id.to_string()),
-    ];
-
-    match host_database::query(sql, &params) {
-        host_database::QueryResult::Success(rows) => Ok(rows
-            .into_iter()
-            .next()
-            .map(|row| issue_from_values(&row.values))),
-        host_database::QueryResult::Error(e) => Err(format!("Database error: {}", e)),
     }
 }
 
@@ -352,6 +337,65 @@ fn assert_repository_context(
     Ok(())
 }
 
+fn issue_from_values(values: &[RecordValue]) -> Issue {
+    Issue {
+        db_id: extract_string(&values[0]),
+        repository_id: extract_string(&values[1]),
+        number: extract_integer(&values[2]),
+        title: extract_string(&values[3]),
+        description: extract_optional_string(&values[4]),
+        status: extract_string(&values[5]),
+        created_at: extract_string(&values[6]),
+    }
+}
+
+fn issue_to_json(issue: &Issue) -> serde_json::Value {
+    json!({
+        "id": format!("{}:{}", issue.repository_id, issue.number),
+        "number": issue.number,
+        "title": issue.title,
+        "description": issue.description,
+        "status": issue.status,
+        "createdAt": issue.created_at,
+        "repositoryId": issue.repository_id,
+    })
+}
+
+fn query_issue_by_number(repository_id: &str, number: i64) -> Result<Option<Issue>, String> {
+    let sql = "SELECT id, repository_id, number, title, description, status, created_at FROM issues WHERE repository_id = ? AND number = ?";
+    let params = vec![
+        RecordValue::Text(repository_id.to_string()),
+        RecordValue::Integer(number),
+    ];
+
+    match host_database::query(sql, &params) {
+        host_database::QueryResult::Success(rows) => Ok(rows
+            .into_iter()
+            .next()
+            .map(|row| issue_from_values(&row.values))),
+        host_database::QueryResult::Error(e) => Err(format!("Database error: {}", e)),
+    }
+}
+
+fn next_issue_number(repository_id: &str) -> Result<i64, String> {
+    let sql = "SELECT COALESCE(MAX(number), 0) FROM issues WHERE repository_id = ?";
+    let params = vec![RecordValue::Text(repository_id.to_string())];
+
+    match host_database::query(sql, &params) {
+        host_database::QueryResult::Success(rows) => {
+            let current = rows
+                .get(0)
+                .and_then(|row| row.values.get(0))
+                .map(extract_integer)
+                .unwrap_or(0);
+            Ok(current + 1)
+        }
+        host_database::QueryResult::Error(e) => {
+            Err(format!("Failed to determine next issue number: {}", e))
+        }
+    }
+}
+
 fn extract_string(value: &RecordValue) -> String {
     match value {
         RecordValue::Text(s) => s.clone(),
@@ -364,6 +408,15 @@ fn extract_optional_string(value: &RecordValue) -> Option<String> {
         RecordValue::Text(s) => Some(s.clone()),
         RecordValue::Null => None,
         _ => None,
+    }
+}
+
+fn extract_integer(value: &RecordValue) -> i64 {
+    match value {
+        RecordValue::Integer(i) => *i,
+        RecordValue::Text(text) => text.parse::<i64>().unwrap_or(0),
+        RecordValue::Null => 0,
+        _ => 0,
     }
 }
 
@@ -410,15 +463,82 @@ fn ensure_repository_schema() -> Result<(), String> {
         }
     }
 
-    match host_database::execute(
-        "CREATE INDEX IF NOT EXISTS idx_issues_repository ON issues(repository_id, created_at DESC)",
-        &[],
-    ) {
-        host_database::ExecResult::Success(_) => Ok(()),
-        host_database::ExecResult::Error(e) => {
-            Err(format!("Failed to ensure repository index: {}", e))
+    let has_number_column = columns.iter().any(|row| {
+        row.values
+            .get(1)
+            .and_then(|value| match value {
+                RecordValue::Text(name) => Some(name == "number"),
+                _ => None,
+            })
+            .unwrap_or(false)
+    });
+
+    if !has_number_column {
+        host_log::log(
+            LogLevel::Info,
+            "Migrating issues table to add number column",
+        );
+        match host_database::execute("ALTER TABLE issues ADD COLUMN number INTEGER", &[]) {
+            host_database::ExecResult::Success(_) => {
+                backfill_issue_numbers()?;
+            }
+            host_database::ExecResult::Error(e) => {
+                return Err(format!(
+                    "Failed to add number column to issues table: {}",
+                    e
+                ));
+            }
         }
     }
+
+    ensure_index(
+        "CREATE INDEX IF NOT EXISTS idx_issues_repository ON issues(repository_id, created_at DESC)",
+        "repository index",
+    )?;
+    ensure_index(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_issues_repository_number ON issues(repository_id, number)",
+        "repository number index",
+    )?;
+
+    Ok(())
+}
+
+fn ensure_index(statement: &str, label: &str) -> Result<(), String> {
+    match host_database::execute(statement, &[]) {
+        host_database::ExecResult::Success(_) => Ok(()),
+        host_database::ExecResult::Error(e) => Err(format!("Failed to ensure {}: {}", label, e)),
+    }
+}
+
+fn backfill_issue_numbers() -> Result<(), String> {
+    let rows = match host_database::query(
+        "SELECT id, repository_id, created_at FROM issues ORDER BY repository_id, created_at",
+        &[],
+    ) {
+        host_database::QueryResult::Success(rows) => rows,
+        host_database::QueryResult::Error(e) => {
+            return Err(format!("Failed to read issues for backfill: {}", e));
+        }
+    };
+
+    let mut counters: HashMap<String, i64> = HashMap::new();
+
+    for row in rows {
+        let id = extract_string(&row.values[0]);
+        let repository_id = extract_string(&row.values[1]);
+        let counter = counters.entry(repository_id.clone()).or_insert(0);
+        *counter += 1;
+
+        let params = vec![RecordValue::Integer(*counter), RecordValue::Text(id)];
+        match host_database::execute("UPDATE issues SET number = ? WHERE id = ?", &params) {
+            host_database::ExecResult::Success(_) => {}
+            host_database::ExecResult::Error(e) => {
+                return Err(format!("Failed to backfill issue number: {}", e));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 export!(IssuesExtension);

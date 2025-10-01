@@ -1,7 +1,7 @@
 //! WIT bindings implementation for extension host functions
 //!
 //! This module provides the host-side implementation of the WIT interface
-//! defined in wit/extension.wit. It uses wit-bindgen to generate bindings
+//! defined in packages/wit/extension.wit. It uses wit-bindgen to generate bindings
 //! and implements the host functions that extensions can import.
 
 use anyhow::Result;
@@ -17,7 +17,7 @@ use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiView};
 // Note: Using sync (not async) to avoid Send+Sync issues with WASI types in Store
 wasmtime::component::bindgen!({
     world: "extension",
-    path: "wit",
+    path: "../packages/wit",
     async: false,
 });
 

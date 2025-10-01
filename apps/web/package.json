@@ -21,7 +21,6 @@
 		"@expressive-code/plugin-shiki": "^0.41.3",
 		"astro": "^5.14.1",
 		"autoprefixer": "^10.4.20",
-		"design": "workspace:*",
 		"postcss": "^8.4.47",
 		"tailwindcss": "^3.4.14",
 		"vue": "^3.4.38"

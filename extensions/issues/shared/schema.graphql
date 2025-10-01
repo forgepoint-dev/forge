@@ -6,6 +6,7 @@ enum IssueStatus {
 
 type Issue @key(fields: "id") {
   id: ID!
+  number: Int!
   title: String!
   description: String
   status: IssueStatus!
@@ -26,10 +27,10 @@ input UpdateIssueInput {
 
 extend type Query {
   getIssuesForRepository(repositoryId: ID!): [Issue!]!
-  getIssue(repositoryId: ID!, id: ID!): Issue
+  getIssue(repositoryId: ID!, issueNumber: Int!): Issue
 }
 
 extend type Mutation {
   createIssue(repositoryId: ID!, input: CreateIssueInput!): Issue!
-  updateIssue(repositoryId: ID!, id: ID!, input: UpdateIssueInput!): Issue
+  updateIssue(repositoryId: ID!, issueNumber: Int!, input: UpdateIssueInput!): Issue
 }

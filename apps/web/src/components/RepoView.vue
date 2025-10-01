@@ -7,6 +7,7 @@ import { pluginLineNumbers } from '@expressive-code/plugin-line-numbers'
 import UiButton from './ui/button.vue'
 import UiInput from './ui/input.vue'
 import ExtensionTabs from './ExtensionTabs.vue'
+import ActionsMenu from './ActionsMenu.vue'
 import { graphqlRequest } from '../lib/graphql'
 import type { RepositoryContext } from '../lib/slots'
 
@@ -19,13 +20,15 @@ async function getExpressiveEngine() {
   if (!expressiveEnginePromise) {
     expressiveEnginePromise = (async () => {
       const [lightTheme, darkTheme] = await Promise.all([
-        loadShikiTheme('github-light'),
-        loadShikiTheme('github-dark'),
+        loadShikiTheme('rose-pine-dawn'),
+        loadShikiTheme('rose-pine-moon'),
       ])
 
       return new ExpressiveCodeEngine({
         themes: [lightTheme, darkTheme],
-        useDarkModeMediaQuery: true,
+        useDarkModeMediaQuery: false,
+        themeCssSelector: (theme) =>
+          theme.type === 'dark' ? '.dark' : ':root:not(.dark)',
         plugins: [
           pluginShiki({
             engine: 'javascript',
@@ -283,6 +286,11 @@ async function loadData(path: string) {
   fileError.value = null
   fileLoading.value = false
   filePreviewHtml.value = null
+  branches.value = []
+  branchesError.value = null
+  branch.value = ''
+  branchInitialized = false
+  activeBranchReference = null
 
   try {
     const repoResponse = await graphqlRequest<{ getRepository: RepositoryDetails | null }>({
@@ -310,6 +318,7 @@ async function loadData(path: string) {
 
     repository.value = repoResponse.getRepository
 
+    await loadBranches(path)
     await loadRepositoryEntries(path, treePath.value)
 
     if (groups.value.length > 0) {
@@ -345,6 +354,46 @@ async function loadData(path: string) {
   }
 }
 
+async function loadBranches(path: string) {
+  branchesLoading.value = true
+  branchesError.value = null
+
+  try {
+    const response = await graphqlRequest<{ listRepositoryBranches: BranchOption[] | null }>({
+      query: /* GraphQL */ `
+        query RepositoryBranches($path: String!) {
+          listRepositoryBranches(path: $path) {
+            name
+            reference
+            isDefault
+          }
+        }
+      `,
+      variables: { path },
+    })
+
+    const payload = response.listRepositoryBranches ?? []
+    branches.value = payload
+
+    const defaultBranch =
+      payload.find((item) => item.isDefault) ?? payload[0] ?? null
+
+    branchInitialized = true
+    if (defaultBranch) {
+      branch.value = defaultBranch.reference
+    } else {
+      branch.value = ''
+    }
+  } catch (err) {
+    branches.value = []
+    branch.value = ''
+    branchInitialized = true
+    branchesError.value = err instanceof Error ? err.message : 'Failed to load branches'
+  } finally {
+    branchesLoading.value = false
+  }
+}
+
 onMounted(() => {
   loadData(props.fullPath)
 })
@@ -358,9 +407,18 @@ watch(
   },
 )
 
-// Placeholder values until repo metadata expands
-const branches = ['main']
-const branch = ref('main')
+type BranchOption = {
+  name: string
+  reference: string
+  isDefault: boolean
+}
+
+const branches = ref<BranchOption[]>([])
+const branch = ref<string>('')
+const branchesLoading = ref(false)
+const branchesError = ref<string | null>(null)
+let branchInitialized = false
+let activeBranchReference: string | null = null
 
 let entriesRequestId = 0
 
@@ -370,15 +428,19 @@ async function loadRepositoryEntries(path: string, tree: string) {
   entriesError.value = null
 
   try {
-    const variables: { path: string; treePath: string } = {
+    const variables: { path: string; treePath: string; branch?: string | null } = {
       path,
       treePath: tree,
     }
 
+    if (branch.value) {
+      variables.branch = branch.value
+    }
+
     const response = await graphqlRequest<{ browseRepository: RepositoryEntriesResponse | null }>({
       query: /* GraphQL */ `
-        query BrowseRepository($path: String!, $treePath: String) {
-          browseRepository(path: $path, treePath: $treePath) {
+        query BrowseRepository($path: String!, $treePath: String, $branch: String) {
+          browseRepository(path: $path, treePath: $treePath, branch: $branch) {
             treePath
             entries {
               name
@@ -401,10 +463,12 @@ async function loadRepositoryEntries(path: string, tree: string) {
       entries.value = []
       entriesError.value = 'Repository contents are unavailable.'
       resolvedTreePath.value = tree
+      activeBranchReference = branch.value || null
       return
     }
 
     entries.value = payload.entries
+    activeBranchReference = branch.value || null
     if (selectedFilePath.value) {
       const stillPresent = payload.entries.some((entry) => entry.path === selectedFilePath.value)
       if (!stillPresent) {
@@ -421,6 +485,7 @@ async function loadRepositoryEntries(path: string, tree: string) {
       return
     }
     entries.value = []
+    activeBranchReference = branch.value || null
     selectedFilePath.value = null
     fileContent.value = null
     fileError.value = null
@@ -450,8 +515,8 @@ async function openFile(path: string) {
   try {
     const response = await graphqlRequest<{ readRepositoryFile: RepositoryFileResponse | null }>({
       query: /* GraphQL */ `
-        query ReadRepositoryFile($path: String!, $filePath: String!) {
-          readRepositoryFile(path: $path, filePath: $filePath) {
+        query ReadRepositoryFile($path: String!, $filePath: String!, $branch: String) {
+          readRepositoryFile(path: $path, filePath: $filePath, branch: $branch) {
             path
             name
             size
@@ -461,7 +526,11 @@ async function openFile(path: string) {
           }
         }
       `,
-      variables: { path: props.fullPath, filePath: path },
+      variables: {
+        path: props.fullPath,
+        filePath: path,
+        branch: branch.value || null,
+      },
     })
 
     const payload = response.readRepositoryFile
@@ -502,6 +571,36 @@ watch(
     fileLoading.value = false
     filePreviewHtml.value = null
     loadRepositoryEntries(props.fullPath, next)
+  },
+)
+
+watch(
+  branch,
+  (next, prev) => {
+    if (!branchInitialized || next === prev) {
+      return
+    }
+    if (!repository.value) {
+      return
+    }
+
+    const normalized = next || null
+    if (normalized === activeBranchReference) {
+      return
+    }
+
+    selectedFilePath.value = null
+    fileContent.value = null
+    fileError.value = null
+    fileLoading.value = false
+    filePreviewHtml.value = null
+
+    const resetPath = ''
+    if (treePath.value !== resetPath) {
+      treePath.value = resetPath
+    } else {
+      loadRepositoryEntries(props.fullPath, resetPath)
+    }
   },
 )
 
@@ -556,6 +655,7 @@ function formatSize(size: number | null | undefined) {
             Public
           </span>
           <div class="ml-auto flex items-center gap-2">
+            <ActionsMenu scope="repository" :repository="repositoryContext ?? undefined" />
             <UiButton variant="outline">Open in IDE</UiButton>
             <UiButton>Clone</UiButton>
           </div>
@@ -584,11 +684,26 @@ function formatSize(size: number | null | undefined) {
       </div>
       <div v-else class="space-y-6">
         <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div class="flex items-center gap-2">
-            <label class="text-xs text-muted-foreground">Branch</label>
-            <select v-model="branch" class="h-9 rounded-md border border-input bg-background px-2 text-sm">
-              <option v-for="b in branches" :key="b" :value="b">{{ b }}</option>
-            </select>
+          <div class="flex flex-col gap-1">
+            <div class="flex items-center gap-2">
+              <label class="text-xs text-muted-foreground">Branch</label>
+              <select
+                v-model="branch"
+                :disabled="branchesLoading || branches.length === 0"
+                class="h-9 min-w-[10rem] rounded-md border border-input bg-background px-2 text-sm disabled:opacity-60"
+              >
+                <option v-if="branchesLoading" value="">Loading…</option>
+                <option v-else-if="branches.length === 0" value="">HEAD</option>
+                <option
+                  v-for="b in branches"
+                  :key="b.reference"
+                  :value="b.reference"
+                >
+                  {{ b.isDefault ? `${b.name} (default)` : b.name }}
+                </option>
+              </select>
+            </div>
+            <p v-if="branchesError" class="text-xs text-destructive">{{ branchesError }}</p>
           </div>
           <div class="flex items-center gap-2 w-full sm:w-80">
             <UiInput placeholder="Search this repo" />

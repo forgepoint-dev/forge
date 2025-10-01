@@ -1,12 +1,17 @@
+use std::collections::HashSet;
+use std::path::PathBuf;
+
 use sqlx::SqlitePool;
+use tokio::task;
 
 use super::db::resolve_repository_by_path;
 use super::entries::{
-    normalize_file_path, normalize_tree_path, read_repository_entries, read_repository_file,
+    normalize_file_path, normalize_tree_path, read_repository_entries,
+    read_repository_file_for_branch,
 };
 use super::models::{
-    RepositoryEntriesPayload, RepositoryFilePayload, RepositoryRecord, RepositorySummary,
-    RepositorySummaryRow,
+    RepositoryBranch, RepositoryEntriesPayload, RepositoryFilePayload, RepositoryRecord,
+    RepositorySummary, RepositorySummaryRow,
 };
 use super::storage::RepositoryStorage;
 use crate::validation::slug::validate_slug;
@@ -49,6 +54,7 @@ pub async fn browse_repository_raw(
     storage: &RepositoryStorage,
     path: String,
     tree_path: Option<String>,
+    branch: Option<String>,
 ) -> anyhow::Result<Option<RepositoryEntriesPayload>> {
     let segments: Vec<String> = path
         .split('/')
@@ -77,7 +83,8 @@ pub async fn browse_repository_raw(
         storage.ensure_local_repository(&segments)?
     };
 
-    let entries = read_repository_entries(repository_path, normalized_tree_path.clone()).await?;
+    let entries =
+        read_repository_entries(repository_path, normalized_tree_path.clone(), branch).await?;
 
     Ok(Some(RepositoryEntriesPayload {
         tree_path: normalized_tree_path,
@@ -85,11 +92,166 @@ pub async fn browse_repository_raw(
     }))
 }
 
+pub async fn list_repository_branches_raw(
+    pool: &SqlitePool,
+    storage: &RepositoryStorage,
+    path: String,
+) -> anyhow::Result<Option<Vec<RepositoryBranch>>> {
+    let segments: Vec<String> = path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| segment.to_string())
+        .collect();
+
+    if segments.is_empty() {
+        return Ok(None);
+    }
+
+    for segment in &segments {
+        validate_slug(segment)?;
+    }
+
+    let record = resolve_repository_by_path(pool, &path).await?;
+    let Some(record) = record else {
+        return Ok(None);
+    };
+
+    let repository_path = if record.remote_url.is_some() {
+        storage.ensure_remote_repository(&record).await?
+    } else {
+        storage.ensure_local_repository(&segments)?
+    };
+
+    let branches = task::spawn_blocking(move || list_repository_branches_blocking(repository_path))
+        .await
+        .map_err(|err| anyhow::anyhow!(err))??;
+
+    Ok(Some(branches))
+}
+
+fn list_repository_branches_blocking(
+    repository_path: PathBuf,
+) -> anyhow::Result<Vec<RepositoryBranch>> {
+    let repo = gix::open(&repository_path).map_err(|err| {
+        anyhow::anyhow!(
+            "failed to open repository at {}: {}",
+            repository_path.display(),
+            err
+        )
+    })?;
+
+    let head = repo.head().ok();
+    let head_reference_name = head
+        .as_ref()
+        .and_then(|head| head.referent_name())
+        .map(full_name_to_string);
+    let head_commit = head
+        .as_ref()
+        .and_then(|head| head.id())
+        .map(|id| id.to_string());
+
+    let mut branches = Vec::new();
+    let mut seen = HashSet::new();
+
+    if let Ok(mut iter) = repo.references()?.local_branches() {
+        while let Some(result) = iter.next() {
+            let reference = match result {
+                Ok(reference) => reference,
+                Err(_) => continue,
+            };
+
+            let full_name = full_name_to_string(reference.name());
+            if !seen.insert(full_name.clone()) {
+                continue;
+            }
+
+            let target = reference.try_id().map(|id| id.to_string());
+            let is_default = head_reference_name
+                .as_ref()
+                .map(|name| name == &full_name)
+                .unwrap_or_else(|| {
+                    if let (Some(head_commit), Some(branch_commit)) = (&head_commit, &target) {
+                        head_commit == branch_commit
+                    } else {
+                        false
+                    }
+                });
+
+            branches.push(RepositoryBranch {
+                name: short_branch_name(&full_name),
+                reference: full_name,
+                target,
+                is_default,
+            });
+        }
+    }
+
+    if branches.is_empty() {
+        let remote_head_target = repo
+            .find_reference("refs/remotes/origin/HEAD")
+            .ok()
+            .and_then(|reference| match reference.target() {
+                gix::refs::TargetRef::Symbolic(name) => Some(full_name_to_string(name)),
+                _ => None,
+            });
+
+        if let Ok(mut iter) = repo.references()?.remote_branches() {
+            while let Some(result) = iter.next() {
+                let reference = match result {
+                    Ok(reference) => reference,
+                    Err(_) => continue,
+                };
+
+                let full_name = full_name_to_string(reference.name());
+                if full_name.ends_with("/HEAD") {
+                    continue;
+                }
+                if !seen.insert(full_name.clone()) {
+                    continue;
+                }
+
+                let target = reference.try_id().map(|id| id.to_string());
+                let is_default = remote_head_target
+                    .as_ref()
+                    .map(|name| name == &full_name)
+                    .unwrap_or(false);
+
+                branches.push(RepositoryBranch {
+                    name: short_branch_name(&full_name),
+                    reference: full_name,
+                    target,
+                    is_default,
+                });
+            }
+        }
+    }
+
+    branches.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(branches)
+}
+
+fn full_name_to_string(name: &gix::refs::FullNameRef) -> String {
+    use gix::bstr::ByteSlice;
+
+    String::from_utf8_lossy(name.as_bstr().as_bytes()).into_owned()
+}
+
+fn short_branch_name(full_name: &str) -> String {
+    if let Some(stripped) = full_name.strip_prefix("refs/heads/") {
+        stripped.to_string()
+    } else if let Some(stripped) = full_name.strip_prefix("refs/remotes/") {
+        stripped.to_string()
+    } else {
+        full_name.to_string()
+    }
+}
+
 pub async fn read_repository_file_raw(
     pool: &SqlitePool,
     storage: &RepositoryStorage,
     path: String,
     file_path: String,
+    branch: Option<String>,
 ) -> anyhow::Result<Option<RepositoryFilePayload>> {
     let segments: Vec<String> = path
         .split('/')
@@ -118,7 +280,8 @@ pub async fn read_repository_file_raw(
         storage.ensure_local_repository(&segments)?
     };
 
-    let file = read_repository_file(repository_path, normalized_file_path).await?;
+    let file =
+        read_repository_file_for_branch(repository_path, normalized_file_path, branch).await?;
 
     Ok(Some(file))
 }

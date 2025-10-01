@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 // Generate WIT bindings
 wit_bindgen::generate!({
     world: "extension",
-    path: "../../wit",
+    path: "../../../packages/wit",
 });
 
 use exports::forge::extension::extension_api::{Config, ExtensionInfo, Guest, ResolveInfo, ResolveResult};

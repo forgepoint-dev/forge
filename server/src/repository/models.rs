@@ -43,6 +43,15 @@ pub struct RepositoryEntriesPayload {
 }
 
 #[derive(Clone, Serialize)]
+pub struct RepositoryBranch {
+    pub name: String,
+    pub reference: String,
+    pub target: Option<String>,
+    #[serde(rename = "isDefault")]
+    pub is_default: bool,
+}
+
+#[derive(Clone, Serialize)]
 pub struct RepositoryFilePayload {
     pub path: String,
     pub name: String,

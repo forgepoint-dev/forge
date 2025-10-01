@@ -63,24 +63,38 @@ pub fn normalize_file_path(file_path: String) -> anyhow::Result<String> {
 pub async fn read_repository_entries(
     repository_path: PathBuf,
     tree_path: String,
+    branch: Option<String>,
 ) -> anyhow::Result<Vec<RepositoryEntryNode>> {
-    task::spawn_blocking(move || list_repository_entries(&repository_path, &tree_path))
-        .await
-        .map_err(|err| anyhow::anyhow!(err))?
+    task::spawn_blocking(move || {
+        list_repository_entries(&repository_path, &tree_path, branch.as_deref())
+    })
+    .await
+    .map_err(|err| anyhow::anyhow!(err))?
 }
 
 pub async fn read_repository_file(
     repository_path: PathBuf,
     file_path: String,
 ) -> anyhow::Result<RepositoryFilePayload> {
-    task::spawn_blocking(move || read_repository_file_blocking(repository_path, file_path))
-        .await
-        .map_err(|err| anyhow::anyhow!(err))?
+    read_repository_file_for_branch(repository_path, file_path, None).await
+}
+
+pub async fn read_repository_file_for_branch(
+    repository_path: PathBuf,
+    file_path: String,
+    branch: Option<String>,
+) -> anyhow::Result<RepositoryFilePayload> {
+    task::spawn_blocking(move || {
+        read_repository_file_blocking(repository_path, file_path, branch.as_deref())
+    })
+    .await
+    .map_err(|err| anyhow::anyhow!(err))?
 }
 
 fn read_repository_file_blocking(
     repository_path: PathBuf,
     file_path: String,
+    branch: Option<&str>,
 ) -> anyhow::Result<RepositoryFilePayload> {
     let repo = gix::open(&repository_path).map_err(|err| {
         anyhow::anyhow!(
@@ -90,15 +104,7 @@ fn read_repository_file_blocking(
         )
     })?;
 
-    let mut head = match repo.head() {
-        Ok(head) => head,
-        Err(_) => {
-            return Err(anyhow::anyhow!("repository does not contain any commits"));
-        }
-    };
-
-    let commit = head.peel_to_commit_in_place()?;
-    let root_tree = commit.tree()?;
+    let root_tree = load_tree_for_branch(&repo, branch)?;
 
     let entry = root_tree
         .lookup_entry_by_path(Path::new(&file_path))?
@@ -148,6 +154,7 @@ fn read_repository_file_blocking(
 fn list_repository_entries(
     repository_path: &Path,
     tree_path: &str,
+    branch: Option<&str>,
 ) -> anyhow::Result<Vec<RepositoryEntryNode>> {
     let repo = gix::open(repository_path).map_err(|err| {
         anyhow::anyhow!(
@@ -157,24 +164,16 @@ fn list_repository_entries(
         )
     })?;
 
-    let mut head = match repo.head() {
-        Ok(head) => head,
-        Err(_) => {
+    let root_tree = match load_tree_for_branch(&repo, branch) {
+        Ok(tree) => tree,
+        Err(err) => {
             if tree_path.is_empty() {
                 return Ok(Vec::new());
             }
 
-            return Err(anyhow::anyhow!(
-                "path `{}` not found in repository",
-                tree_path
-            ));
+            return Err(err);
         }
     };
-
-    let commit = head
-        .peel_to_commit_in_place()
-        .map_err(|err| anyhow::anyhow!(err))?;
-    let root_tree = commit.tree().map_err(|err| anyhow::anyhow!(err))?;
 
     let tree = if tree_path.is_empty() {
         root_tree
@@ -248,4 +247,65 @@ fn list_repository_entries(
     });
 
     Ok(entries)
+}
+
+fn load_tree_for_branch<'repo>(
+    repo: &'repo gix::Repository,
+    branch: Option<&str>,
+) -> anyhow::Result<gix::Tree<'repo>> {
+    let commit = load_commit_for_branch(repo, branch)?;
+    commit.tree().map_err(|err| anyhow::anyhow!(err))
+}
+
+fn load_commit_for_branch<'repo>(
+    repo: &'repo gix::Repository,
+    branch: Option<&str>,
+) -> anyhow::Result<gix::Commit<'repo>> {
+    match branch {
+        Some(name) => {
+            let mut reference = find_reference_for_branch(repo, name)?;
+            reference
+                .peel_to_commit()
+                .map_err(|err| anyhow::anyhow!(err))
+        }
+        None => {
+            let head = repo.head()?;
+            if let Some(mut reference) = head.clone().try_into_referent() {
+                reference
+                    .peel_to_commit()
+                    .map_err(|err| anyhow::anyhow!(err))
+            } else if let Some(id) = head.id() {
+                repo.find_commit(id.detach())
+                    .map_err(|err| anyhow::anyhow!(err))
+            } else {
+                Err(anyhow::anyhow!("repository does not contain any commits"))
+            }
+        }
+    }
+}
+
+fn find_reference_for_branch<'repo>(
+    repo: &'repo gix::Repository,
+    branch: &str,
+) -> anyhow::Result<gix::Reference<'repo>> {
+    let mut candidates = Vec::new();
+    if branch.starts_with("refs/") {
+        candidates.push(branch.to_string());
+    } else {
+        candidates.push(format!("refs/heads/{}", branch));
+        candidates.push(format!("refs/remotes/{}", branch));
+    }
+    candidates.push(branch.to_string());
+
+    let mut last_error: Option<anyhow::Error> = None;
+    for candidate in candidates {
+        match repo.find_reference(candidate.as_str()) {
+            Ok(reference) => return Ok(reference),
+            Err(err) => {
+                last_error = Some(anyhow::anyhow!(err));
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("branch `{}` not found", branch)))
 }

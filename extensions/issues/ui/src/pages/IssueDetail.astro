@@ -1,5 +1,35 @@
 ---
-const { id } = Astro.params;
+import IssueDetailView from '../components/IssueDetailView.vue';
+
+export const prerender = false;
+
+const repoParam = (Astro.params as any).repo;
+const numberParam = (Astro.params as any).number;
+const legacyIdParam = (Astro.params as any).id;
+
+const repositoryPathFromParams = Array.isArray(repoParam)
+  ? repoParam.join('/')
+  : typeof repoParam === 'string'
+    ? repoParam
+    : '';
+
+const repositoryPath = repositoryPathFromParams || Astro.url.searchParams.get('repositoryPath') || '';
+const issueNumberFromRoute = typeof numberParam !== 'undefined' ? Number(numberParam) : undefined;
+const issueNumberFromLegacy = typeof legacyIdParam !== 'undefined' ? Number(legacyIdParam) : undefined;
+const issueNumberFromQuery = Astro.url.searchParams.get('issueNumber');
+
+const parsedIssueNumber =
+  issueNumberFromRoute ??
+  issueNumberFromLegacy ??
+  (issueNumberFromQuery ? Number(issueNumberFromQuery) : undefined);
+
+const issueNumber = typeof parsedIssueNumber === 'number' && !Number.isNaN(parsedIssueNumber)
+  ? parsedIssueNumber
+  : undefined;
+
+const backLink = repositoryPath
+  ? `/${repositoryPath}/issues`
+  : '/issues';
 ---
 
 <html lang="en">
@@ -8,13 +38,22 @@ const { id } = Astro.params;
 		<meta name="viewport" content="width=device-width" />
 		<title>Issue {id} - Forge</title>
 	</head>
-	<body>
-		<div class="container mx-auto px-4 py-8">
-			<h1 class="text-3xl font-bold mb-4">Issue {id}</h1>
-			<p class="text-gray-600">Issue detail view - to be implemented</p>
-			<a href="/issues" class="text-blue-600 hover:text-blue-800 mt-4 inline-block">
-				← Back to issues
-			</a>
+<body class="min-h-screen bg-background text-foreground">
+	<div class="mx-auto max-w-3xl px-4 py-10 space-y-6">
+		<a href={backLink} class="inline-flex items-center text-sm font-medium text-primary hover:text-primary/80">
+			← Back to issues
+		</a>
+
+		<div class="rounded-lg border border-border bg-card p-6 shadow-sm">
+			{repositoryPath && typeof issueNumber !== 'undefined' ? (
+				<IssueDetailView client:load repository-path={repositoryPath} issue-number={issueNumber} />
+			) : (
+				<div class="rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-6 text-sm text-amber-800 dark:text-amber-200">
+					Unable to resolve repository or issue number from the URL. Ensure the path follows
+					<code>/&lt;group&gt;/&lt;repo&gt;/issues/&lt;number&gt;</code>.
+				</div>
+			)}
 		</div>
-	</body>
+	</div>
+</body>
 </html>
