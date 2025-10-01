@@ -65,7 +65,9 @@
                 "wasm32-wasip2"
               ];
 
-              mold.enable = true;
+              # Note: mold is disabled because it's incompatible with WebAssembly targets
+              # WASM uses rust-lld which doesn't support the -fuse-ld=mold flag
+              mold.enable = false;
             };
 
             packages = [
