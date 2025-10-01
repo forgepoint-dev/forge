@@ -12,7 +12,7 @@ hive-router-plan-executor = "1.0.4"
 graphql-tools = "0.4.0"
 graphql-parser = "0.4.1"
 axum = "0.8"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread", "net", "io-util", "time", "fs"] }
 tokio-util = "0.7"
 futures = "0.3"
 anyhow = "1"
