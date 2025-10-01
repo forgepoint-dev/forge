@@ -4,8 +4,6 @@ import { ExpressiveCodeEngine } from '@expressive-code/core'
 import { toHtml } from '@expressive-code/core/hast'
 import { loadShikiTheme, pluginShiki } from '@expressive-code/plugin-shiki'
 import { pluginLineNumbers } from '@expressive-code/plugin-line-numbers'
-import { marked } from 'marked'
-import Asciidoctor from 'asciidoctor'
 import UiButton from './ui/button.vue'
 import UiInput from './ui/input.vue'
 import ExtensionTabs from './ExtensionTabs.vue'
@@ -131,6 +129,7 @@ type RepositoryDetails = {
   group: { id: string; slug: string } | null
   isRemote: boolean
   remoteUrl?: string | null
+  readmeHtml?: string | null
 }
 
 type GroupDetails = {
@@ -183,11 +182,6 @@ const fileContent = ref<RepositoryFileResponse | null>(null)
 const fileLoading = ref(false)
 const fileError = ref<string | null>(null)
 const filePreviewHtml = ref<string | null>(null)
-const readmeFile = ref<string | null>(null)
-const readmeContent = ref<string | null>(null)
-const readmeHtml = ref<string | null>(null)
-const readmeLoading = ref(false)
-const readmeError = ref<string | null>(null)
 
 const isRemote = computed(() => repository.value?.isRemote ?? false)
 const remoteUrl = computed(() => repository.value?.remoteUrl ?? null)
@@ -302,12 +296,13 @@ async function loadData(path: string) {
   try {
     const repoResponse = await graphqlRequest<{ getRepository: RepositoryDetails | null }>({
       query: /* GraphQL */ `
-        query RepositoryByPath($path: String!) {
+        query RepositoryByPath($path: String!, $branch: String) {
           getRepository(path: $path) {
             id
             slug
             isRemote
             remoteUrl
+            readmeHtml(branch: $branch)
             group {
               id
               slug
@@ -315,7 +310,7 @@ async function loadData(path: string) {
           }
         }
       `,
-      variables: { path },
+      variables: { path, branch: branch.value || null },
     })
 
     if (!repoResponse.getRepository) {
@@ -487,8 +482,6 @@ async function loadRepositoryEntries(path: string, tree: string) {
       }
     }
     resolvedTreePath.value = payload.treePath
-    
-    await loadReadme()
   } catch (err) {
     if (requestId !== entriesRequestId) {
       return
@@ -509,107 +502,6 @@ async function loadRepositoryEntries(path: string, tree: string) {
   }
 }
 
-function detectReadmeFile(): string | null {
-  const readmeNames = [
-    'README.md',
-    'readme.md',
-    'Readme.md',
-    'README.markdown',
-    'readme.markdown',
-    'README.adoc',
-    'readme.adoc',
-    'README.asciidoc',
-    'readme.asciidoc',
-  ]
-
-  for (const name of readmeNames) {
-    const found = entries.value.find((entry) => entry.name === name && entry.type === 'FILE')
-    if (found) {
-      return found.path
-    }
-  }
-
-  return null
-}
-
-async function loadReadme() {
-  if (!repository.value || resolvedTreePath.value !== '') {
-    readmeFile.value = null
-    readmeContent.value = null
-    readmeHtml.value = null
-    return
-  }
-
-  const readmePath = detectReadmeFile()
-  if (!readmePath) {
-    readmeFile.value = null
-    readmeContent.value = null
-    readmeHtml.value = null
-    return
-  }
-
-  readmeFile.value = readmePath
-  readmeLoading.value = true
-  readmeError.value = null
-  readmeContent.value = null
-  readmeHtml.value = null
-
-  try {
-    const response = await graphqlRequest<{ readRepositoryFile: RepositoryFileResponse | null }>({
-      query: /* GraphQL */ `
-        query ReadRepositoryFile($path: String!, $filePath: String!, $branch: String) {
-          readRepositoryFile(path: $path, filePath: $filePath, branch: $branch) {
-            path
-            name
-            size
-            isBinary
-            text
-            truncated
-          }
-        }
-      `,
-      variables: {
-        path: props.fullPath,
-        filePath: readmePath,
-        branch: branch.value || null,
-      },
-    })
-
-    const payload = response.readRepositoryFile
-    if (!payload || payload.isBinary || !payload.text) {
-      readmeFile.value = null
-      readmeContent.value = null
-      readmeHtml.value = null
-      return
-    }
-
-    readmeContent.value = payload.text
-    readmeHtml.value = await renderReadme(payload.text, payload.name)
-  } catch (err) {
-    readmeError.value = err instanceof Error ? err.message : 'Failed to load README'
-    readmeFile.value = null
-    readmeContent.value = null
-    readmeHtml.value = null
-  } finally {
-    readmeLoading.value = false
-  }
-}
-
-async function renderReadme(content: string, filename: string): Promise<string> {
-  const ext = filename.split('.').pop()?.toLowerCase()
-
-  if (ext === 'adoc' || ext === 'asciidoc') {
-    const asciidoctor = Asciidoctor()
-    return asciidoctor.convert(content, { safe: 'safe' }) as string
-  }
-
-  marked.setOptions({
-    breaks: true,
-    gfm: true,
-  })
-
-  return marked.parse(content) as string
-}
 
 async function openFile(path: string) {
   if (!repository.value) return
@@ -687,7 +579,7 @@ watch(
 
 watch(
   branch,
-  (next, prev) => {
+  async (next, prev) => {
     if (!branchInitialized || next === prev) {
       return
     }
@@ -705,6 +597,27 @@ watch(
     fileError.value = null
     fileLoading.value = false
     filePreviewHtml.value = null
+
+    // Refetch README for new branch
+    try {
+      const repoResponse = await graphqlRequest<{ getRepository: RepositoryDetails | null }>({
+        query: /* GraphQL */ `
+          query RepositoryReadmeForBranch($path: String!, $branch: String) {
+            getRepository(path: $path) {
+              id
+              readmeHtml(branch: $branch)
+            }
+          }
+        `,
+        variables: { path: props.fullPath, branch: next || null },
+      })
+
+      if (repoResponse.getRepository && repository.value) {
+        repository.value.readmeHtml = repoResponse.getRepository.readmeHtml
+      }
+    } catch (err) {
+      console.error('Failed to load README for branch:', err)
+    }
 
     const resetPath = ''
     if (treePath.value !== resetPath) {
@@ -982,14 +895,14 @@ function formatSize(size: number | null | undefined) {
         </ExtensionTabs>
 
         <!-- README Section -->
-        <section v-if="readmeHtml && resolvedTreePath === ''" class="rounded-lg border bg-card">
+        <section v-if="repository?.readmeHtml && resolvedTreePath === ''" class="rounded-lg border bg-card">
           <div class="border-b px-5 py-4">
             <h3 class="text-sm font-semibold text-muted-foreground flex items-center gap-2">
-              <span>{{ readmeFile }}</span>
+              <span>README</span>
             </h3>
           </div>
           <div class="prose prose-sm dark:prose-invert max-w-none p-5">
-            <div v-html="readmeHtml"></div>
+            <div v-html="repository.readmeHtml"></div>
           </div>
         </section>
 

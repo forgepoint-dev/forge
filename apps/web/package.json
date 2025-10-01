@@ -19,10 +19,8 @@
 		"@expressive-code/core": "^0.41.3",
 		"@expressive-code/plugin-line-numbers": "^0.41.3",
 		"@expressive-code/plugin-shiki": "^0.41.3",
-		"asciidoctor": "^3.0.4",
 		"astro": "^5.14.1",
 		"autoprefixer": "^10.4.20",
-		"marked": "^16.3.0",
 		"postcss": "^8.4.47",
 		"tailwindcss": "^3.4.14",
 		"vue": "^3.4.38"
