@@ -95,9 +95,12 @@ async fn auth_callback_handler(
     }
 }
 
-async fn auth_logout_handler(State(app_state): State<AppState>) -> axum::response::Response {
+async fn auth_logout_handler(
+    State(app_state): State<AppState>,
+    query: axum::extract::Query<auth_handlers::LogoutQuery>,
+) -> axum::response::Response {
     if let Some(auth_state) = app_state.auth {
-        auth_handlers::logout_handler(State(auth_state)).await.into_response()
+        auth_handlers::logout_handler(State(auth_state), query).await.into_response()
     } else {
         (StatusCode::NOT_FOUND, "Authentication not configured").into_response()
     }

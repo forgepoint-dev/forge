@@ -49,10 +49,11 @@ This will delete the current session.
 
 ## Session Management
 
-Forgepoint uses in-memory session management suitable for single-user scenarios:
+Forgepoint uses in-memory session management suitable for single-tenant, multi-user scenarios:
 
-- Only one active session is supported (single-user forge)
+- Multiple users can be logged in simultaneously (single-tenant, multi-user)
 - Sessions are stored in memory and lost on server restart
+- Each session is identified by a unique session ID
 - Session information includes:
   - User DID (Decentralized Identifier)
   - User handle
@@ -81,13 +82,13 @@ The server will start normally with authentication disabled.
 
 1. **HTTPS in Production**: Always use HTTPS in production to protect access tokens
 2. **Client Secret**: Keep your client secret secure and never commit it to version control
-3. **Single User**: Current implementation supports only one active session (single-user forge)
+3. **Session Storage**: Sessions are currently stored in memory - consider persistent storage for production
 4. **In-Memory Sessions**: Sessions are not persisted and will be lost on server restart
 
 ## Future Enhancements
 
-- Persistent session storage
-- Multiple session support (if multi-user is needed)
-- GraphQL mutations for login/logout
+- Persistent session storage (database-backed)
+- Session cookies or JWT tokens for stateless authentication
 - Token refresh mechanism
 - Session expiration and cleanup
+- Role-based access control (RBAC)

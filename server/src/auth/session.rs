@@ -1,10 +1,11 @@
-//! Session management for single-user forge
+//! Session management for single-tenant forge
 //!
-//! This module provides in-memory session storage for the authenticated user.
-//! Since this is a single-user forge, we only need to track one active session.
+//! This module provides in-memory session storage for authenticated users.
+//! Multiple users can be logged in simultaneously (single-tenant, multi-user).
 
 use super::User;
 use anyhow::Result;
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use uuid::Uuid;
 
@@ -21,22 +22,22 @@ pub struct Session {
     pub refresh_token: Option<String>,
 }
 
-/// Session manager for single-user forge
+/// Session manager for single-tenant forge
 ///
-/// This is a simple in-memory store that holds at most one active session.
-/// For a single-user forge, this is sufficient.
+/// This is a simple in-memory store that holds multiple active sessions.
+/// For a single-tenant forge, multiple users can be logged in simultaneously.
 pub struct SessionManager {
-    current_session: Arc<RwLock<Option<Session>>>,
+    sessions: Arc<RwLock<HashMap<String, Session>>>,
 }
 
 impl SessionManager {
     pub fn new() -> Self {
         Self {
-            current_session: Arc::new(RwLock::new(None)),
+            sessions: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    /// Create a new session for the authenticated user
+    /// Create a new session for an authenticated user
     pub fn create_session(
         &self,
         user: User,
@@ -51,41 +52,51 @@ impl SessionManager {
             refresh_token,
         };
 
-        let mut current = self.current_session.write()
+        let mut sessions = self.sessions.write()
             .map_err(|e| anyhow::anyhow!("Failed to acquire session lock: {}", e))?;
-        *current = Some(session);
+        sessions.insert(session_id.clone(), session);
 
         Ok(session_id)
     }
 
-    /// Get the current active session
+    /// Get a session by its ID
     pub fn get_session(&self, session_id: &str) -> Result<Option<Session>> {
-        let current = self.current_session.read()
+        let sessions = self.sessions.read()
             .map_err(|e| anyhow::anyhow!("Failed to acquire session lock: {}", e))?;
         
-        Ok(current.as_ref().and_then(|s| {
-            if s.id == session_id {
-                Some(s.clone())
-            } else {
-                None
-            }
-        }))
+        Ok(sessions.get(session_id).cloned())
     }
 
-    /// Get the current user if authenticated
-    pub fn get_current_user(&self) -> Result<Option<User>> {
-        let current = self.current_session.read()
+    /// Get user from a session
+    pub fn get_user(&self, session_id: &str) -> Result<Option<User>> {
+        let sessions = self.sessions.read()
             .map_err(|e| anyhow::anyhow!("Failed to acquire session lock: {}", e))?;
         
-        Ok(current.as_ref().map(|s| s.user.clone()))
+        Ok(sessions.get(session_id).map(|s| s.user.clone()))
     }
 
-    /// Delete the current session (logout)
-    pub fn delete_session(&self) -> Result<()> {
-        let mut current = self.current_session.write()
+    /// Delete a specific session (logout)
+    pub fn delete_session(&self, session_id: &str) -> Result<()> {
+        let mut sessions = self.sessions.write()
             .map_err(|e| anyhow::anyhow!("Failed to acquire session lock: {}", e))?;
-        *current = None;
+        sessions.remove(session_id);
         Ok(())
+    }
+
+    /// Get all active sessions (for admin purposes)
+    pub fn get_all_sessions(&self) -> Result<Vec<Session>> {
+        let sessions = self.sessions.read()
+            .map_err(|e| anyhow::anyhow!("Failed to acquire session lock: {}", e))?;
+        
+        Ok(sessions.values().cloned().collect())
+    }
+
+    /// Get count of active sessions
+    pub fn session_count(&self) -> Result<usize> {
+        let sessions = self.sessions.read()
+            .map_err(|e| anyhow::anyhow!("Failed to acquire session lock: {}", e))?;
+        
+        Ok(sessions.len())
     }
 }
 
@@ -115,27 +126,55 @@ mod tests {
     }
 
     #[test]
-    fn test_get_current_user() {
+    fn test_multiple_concurrent_sessions() {
+        let manager = SessionManager::new();
+        let user1 = User::new("did:plc:user1".to_string(), "user1.bsky.social".to_string());
+        let user2 = User::new("did:plc:user2".to_string(), "user2.bsky.social".to_string());
+        
+        let session_id1 = manager.create_session(user1.clone(), "token1".to_string(), None).unwrap();
+        let session_id2 = manager.create_session(user2.clone(), "token2".to_string(), None).unwrap();
+        
+        // Both sessions should exist
+        let session1 = manager.get_session(&session_id1).unwrap();
+        let session2 = manager.get_session(&session_id2).unwrap();
+        
+        assert!(session1.is_some());
+        assert!(session2.is_some());
+        assert_eq!(session1.unwrap().user.did, "did:plc:user1");
+        assert_eq!(session2.unwrap().user.did, "did:plc:user2");
+        
+        // Session count should be 2
+        assert_eq!(manager.session_count().unwrap(), 2);
+    }
+
+    #[test]
+    fn test_get_user() {
         let manager = SessionManager::new();
         let user = User::new("did:plc:test123".to_string(), "testuser.bsky.social".to_string());
         
-        manager.create_session(user.clone(), "token123".to_string(), None).unwrap();
+        let session_id = manager.create_session(user.clone(), "token123".to_string(), None).unwrap();
         
-        let current_user = manager.get_current_user().unwrap();
-        assert!(current_user.is_some());
-        assert_eq!(current_user.unwrap().did, "did:plc:test123");
+        let retrieved_user = manager.get_user(&session_id).unwrap();
+        assert!(retrieved_user.is_some());
+        assert_eq!(retrieved_user.unwrap().did, "did:plc:test123");
     }
 
     #[test]
     fn test_delete_session() {
         let manager = SessionManager::new();
-        let user = User::new("did:plc:test123".to_string(), "testuser.bsky.social".to_string());
+        let user1 = User::new("did:plc:user1".to_string(), "user1.bsky.social".to_string());
+        let user2 = User::new("did:plc:user2".to_string(), "user2.bsky.social".to_string());
         
-        manager.create_session(user.clone(), "token123".to_string(), None).unwrap();
-        manager.delete_session().unwrap();
+        let session_id1 = manager.create_session(user1.clone(), "token1".to_string(), None).unwrap();
+        let session_id2 = manager.create_session(user2.clone(), "token2".to_string(), None).unwrap();
         
-        let current_user = manager.get_current_user().unwrap();
-        assert!(current_user.is_none());
+        // Delete first session
+        manager.delete_session(&session_id1).unwrap();
+        
+        // First session should be gone, second should remain
+        assert!(manager.get_session(&session_id1).unwrap().is_none());
+        assert!(manager.get_session(&session_id2).unwrap().is_some());
+        assert_eq!(manager.session_count().unwrap(), 1);
     }
 
     #[test]
@@ -150,5 +189,18 @@ mod tests {
         
         let session = manager.get_session(&session_id).unwrap();
         assert!(session.is_some());
+    }
+
+    #[test]
+    fn test_get_all_sessions() {
+        let manager = SessionManager::new();
+        let user1 = User::new("did:plc:user1".to_string(), "user1.bsky.social".to_string());
+        let user2 = User::new("did:plc:user2".to_string(), "user2.bsky.social".to_string());
+        
+        manager.create_session(user1.clone(), "token1".to_string(), None).unwrap();
+        manager.create_session(user2.clone(), "token2".to_string(), None).unwrap();
+        
+        let all_sessions = manager.get_all_sessions().unwrap();
+        assert_eq!(all_sessions.len(), 2);
     }
 }

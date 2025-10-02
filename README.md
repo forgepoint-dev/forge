@@ -1,12 +1,12 @@
 # Forgepoint
 
-A single-user code forge with a GraphQL API for managing groups and repositories, featuring an extensible WASM-based plugin architecture.
+A single-tenant code forge with a GraphQL API for managing groups and repositories, featuring an extensible WASM-based plugin architecture. Multiple users can authenticate and collaborate within a single tenant.
 
 ## Features
 
 - **GraphQL API** - Complete API for managing repositories and groups
 - **HTTP CLI** - Remote repository management via command-line
-- **ATProto Authentication** - Optional OAuth authentication with Bluesky and other ATProto services
+- **ATProto Authentication** - Multi-user OAuth authentication with Bluesky and other ATProto services
 - **Hierarchical Organization** - Nest repositories within groups
 - **WASM Extensions** - Secure, sandboxed plugin system
 - **Local & Remote Repositories** - Support for both local working copies and remote repository links

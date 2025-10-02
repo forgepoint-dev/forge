@@ -187,9 +187,60 @@ pub async fn callback_handler(
     Html(html).into_response()
 }
 
+/// Logout query parameters
+#[derive(Debug, Deserialize)]
+pub struct LogoutQuery {
+    pub session_id: Option<String>,
+}
+
 /// Handler for logout
-pub async fn logout_handler(State(auth_state): State<Arc<AuthState>>) -> impl IntoResponse {
-    match auth_state.session_manager.delete_session() {
+/// 
+/// Note: In production, session ID should be stored in a secure HTTP-only cookie
+/// and retrieved from there. For now, we accept it as a query parameter or default
+/// to clearing all sessions (backwards compatible with single-user mode).
+pub async fn logout_handler(
+    State(auth_state): State<Arc<AuthState>>,
+    Query(params): Query<LogoutQuery>,
+) -> impl IntoResponse {
+    let result = if let Some(session_id) = params.session_id {
+        // Delete specific session
+        auth_state.session_manager.delete_session(&session_id)
+    } else {
+        // For backwards compatibility, show message that session ID is required
+        return Html(r#"<!DOCTYPE html>
+<html>
+<head>
+    <title>Logout</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f5f5f5;
+        }
+        .container {
+            text-align: center;
+            background: white;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Logout</h1>
+        <p>Please provide your session ID as a query parameter: <code>?session_id=YOUR_SESSION_ID</code></p>
+        <p>In production, sessions would be managed via secure HTTP-only cookies.</p>
+    </div>
+</body>
+</html>"#).into_response();
+    };
+
+    match result {
         Ok(_) => {
             let html = r#"<!DOCTYPE html>
 <html>
