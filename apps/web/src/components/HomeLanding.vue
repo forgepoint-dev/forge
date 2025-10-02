@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import UiInput from './ui/input.vue'
 import UiButton from './ui/button.vue'
+import ThemeSwitcher from './ThemeSwitcher.vue'
 import CreateRepositoryModal from './CreateRepositoryModal.vue'
 import LinkRepositoryModal from './LinkRepositoryModal.vue'
 import { graphqlRequest } from '../lib/graphql'
@@ -171,7 +172,7 @@ const authLoginUrl = (() => {
 
   const graphqlEndpoint = env.PUBLIC_FORGE_GRAPHQL_URL ?? 'http://localhost:8000/graphql'
   const base = graphqlEndpoint.replace(/\/graphql$/, '')
-  const sanitizedBase = base.ends_with('/') ? base.slice(0, -1) : base
+  const sanitizedBase = base.endsWith('/') ? base.slice(0, -1) : base
   return `${sanitizedBase}/auth/login`
 })()
 
@@ -196,6 +197,7 @@ const authLoginUrl = (() => {
           </div>
         </div>
         <div class="flex items-center justify-end gap-2">
+          <ThemeSwitcher />
           <UiButton as="a" :href="authLoginUrl" size="sm">
             Register / Login
           </UiButton>

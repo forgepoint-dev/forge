@@ -8,7 +8,7 @@ const { title = 'Forge', description = 'A modern Git forge for teams and OSS' } 
 import '../styles/global.css';
 ---
 
-<html lang="en" class="h-full">
+<html lang="en" class="h-full" data-theme="rosepine">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -20,6 +20,20 @@ import '../styles/global.css';
     <meta property="og:description" content={description} />
   </head>
   <body class="min-h-full bg-background text-foreground">
+    <script is:inline>
+      // Early theme init to avoid FOUC
+      (function () {
+        try {
+          const root = document.documentElement
+          const mode = localStorage.getItem('fp-theme-mode') || 'auto'
+          const brand = localStorage.getItem('fp-theme-brand') || 'rosepine'
+          root.setAttribute('data-theme', brand)
+          const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+          const isDark = mode === 'dark' || (mode === 'auto' && prefersDark)
+          root.classList.toggle('dark', isDark)
+        } catch {}
+      })()
+    </script>
     <slot />
   </body>
   
