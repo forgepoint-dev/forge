@@ -203,13 +203,14 @@ impl ExtensionState {
     }
 }
 
-// Expose WASI internals to Wasmtime runtime
+// Implement IoView for resource table access
 impl IoView for ExtensionState {
     fn table(&mut self) -> &mut ResourceTable {
         &mut self.table
     }
 }
 
+// Implement WasiView so Wasmtime can access WASI context
 impl WasiView for ExtensionState {
     fn ctx(&mut self) -> &mut WasiCtx {
         &mut self.wasi

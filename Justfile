@@ -34,3 +34,13 @@ run-web:
 clean-extension:
     rm -f {{FORGE_EXTENSIONS_DIR}}/issues.wasm
     rm -f target/wasm32-wasip1/release/forgepoint_extension_issues.wasm
+
+# Build the forge CLI binary (HTTP-based remote management tool)
+build-cli:
+    nix develop --impure -c cargo build --package forge-cli --release
+
+# Run the forge CLI (pass arguments after --)
+# Example: just run-cli repo create my-project
+run-cli *ARGS:
+    nix develop --impure -c cargo run --package forge-cli -- {{ARGS}}
+

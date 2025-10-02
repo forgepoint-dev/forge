@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "server",
     "extensions/issues/api",
+    "cli",
 ]
 
 [patch.crates-io]
