@@ -379,8 +379,21 @@ fn plan_pack(repo_dir: PathBuf, req: &FetchRequest) -> anyhow::Result<PackPlan> 
     // Start from wants
     let mut want_q: VecDeque<(gix::hash::ObjectId, u32)> = VecDeque::new();
     let mut seen: HashSet<gix::hash::ObjectId> = HashSet::new();
+    let mut direct_blobs: Vec<gix::hash::ObjectId> = Vec::new();
+    let mut tree_queue: VecDeque<(gix::hash::ObjectId, u32)> = VecDeque::new();
     for w in req.wants() {
-        if let Ok(oid) = gix::hash::ObjectId::from_hex(w.as_bytes()) { want_q.push_back((oid, 0)); }
+        if let Ok(oid) = gix::hash::ObjectId::from_hex(w.as_bytes()) {
+            if let Ok(obj) = repo.find_object(oid) {
+                match obj.kind {
+                    gix::objs::Kind::Commit => want_q.push_back((oid, 0)),
+                    gix::objs::Kind::Tree => tree_queue.push_back((oid, 0)),
+                    gix::objs::Kind::Blob => direct_blobs.push(oid),
+                    gix::objs::Kind::Tag => (),
+                }
+            } else {
+                want_q.push_back((oid, 0));
+            }
+        }
     }
 
     // Client haves (stop traversal at these)
@@ -411,12 +424,13 @@ fn plan_pack(repo_dir: PathBuf, req: &FetchRequest) -> anyhow::Result<PackPlan> 
     }
 
     let mut commits: Vec<gix::hash::ObjectId> = Vec::new();
-    let mut tree_queue: VecDeque<gix::hash::ObjectId> = VecDeque::new();
     let mut blobs: Vec<gix::hash::ObjectId> = Vec::new();
     let mut shallows: HashSet<gix::hash::ObjectId> = HashSet::new();
 
     let depth_limit = req.deepen();
     let since_limit = req.deepen_since();
+    let tree_depth_limit = req.filter_tree_depth();
+    let blob_limit = req.filter_blob_limit();
 
     while let Some((cid, d)) = want_q.pop_front() {
         if have_set.contains(&cid) { continue; }
@@ -425,7 +439,7 @@ fn plan_pack(repo_dir: PathBuf, req: &FetchRequest) -> anyhow::Result<PackPlan> 
         if commit.kind != gix::objs::Kind::Commit { continue; }
         let (tree_id, parents, _ts) = parse_commit_meta(commit.data.as_ref())?;
         commits.push(cid);
-        tree_queue.push_back(tree_id);
+        tree_queue.push_back((tree_id, 0));
 
         // Traverse parents with constraints
         for p in parents {
@@ -452,19 +466,37 @@ fn plan_pack(repo_dir: PathBuf, req: &FetchRequest) -> anyhow::Result<PackPlan> 
 
     // Walk trees to collect all referenced trees and blobs
     let mut seen_tree = HashSet::new();
-    while let Some(tid) = tree_queue.pop_front() {
+    while let Some((tid, depth)) = tree_queue.pop_front() {
         if !seen_tree.insert(tid) { continue; }
         let tree = repo.find_object(tid)?;
         let t = gix::objs::TreeRef::from_bytes(tree.data.as_ref())?;
         for entry in t.entries.iter() {
             if entry.mode.is_tree() {
-                tree_queue.push_back(entry.oid.into());
-            } else if entry.mode.is_blob() || entry.mode.is_link() {
-                if !req.filter_blob_none() {
-                    blobs.push(entry.oid.into());
+                if tree_depth_limit.map(|lim| depth < lim).unwrap_or(true) {
+                    tree_queue.push_back((entry.oid.into(), depth + 1));
                 }
+            } else if entry.mode.is_blob() || entry.mode.is_link() {
+                if req.filter_blob_none() { continue; }
+                if let Some(limit) = blob_limit {
+                    // Look up blob size and include only if <= limit
+                    if let Ok(obj) = repo.find_object(entry.oid) {
+                        if obj.kind == gix::objs::Kind::Blob && obj.data.len() > limit { continue; }
+                    }
+                }
+                blobs.push(entry.oid.into());
             }
         }
+    }
+
+    // Include any direct blob wants (lazy fetches)
+    for oid in direct_blobs {
+        if req.filter_blob_none() { continue; }
+        if let Some(limit) = blob_limit {
+            if let Ok(obj) = repo.find_object(oid) {
+                if obj.kind == gix::objs::Kind::Blob && obj.data.len() > limit { continue; }
+            }
+        }
+        blobs.push(oid);
     }
 
     Ok(PackPlan {

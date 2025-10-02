@@ -61,6 +61,14 @@ jobs:
       - name: Rust backend — end-to-end
         run: nix develop --impure -c bash server/tests/git_http_v2_rust_backend.sh
 
+      - name: Partial clone — blob:none (rust)
+        continue-on-error: true
+        run: nix develop --impure -c bash server/tests/git_http_v2_partial_blob_none.sh
+
+      - name: Partial clone — tree:1 (rust)
+        continue-on-error: true
+        run: nix develop --impure -c bash server/tests/git_http_v2_filter_tree.sh
+
       - name: Packet trace diff (git vs rust)
         env:
           TRACE_SCENARIOS: "simple-clone shallow-clone incremental-fetch"

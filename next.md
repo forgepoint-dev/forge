@@ -191,6 +191,19 @@ Acceptance for “parity with git http-backend”: All tests in the suite pass w
   - `simple-clone` (default), `shallow-clone`; partial-clone filters are available but likely to fail until Phase B.
   - Example: `BENCH_SCENARIOS="simple-clone shallow-clone" just bench-git-http-v2`
 
+## Phase B Status Update
+
+Remaining to fully complete Phase B
+
+- DONE: Add blob:limit=<n> support tests.
+  - Added `server/tests/git_http_v2_partial_blob_limit.sh` ensuring pack shrinks and clone succeeds.
+- DONE: Add trace-diff scenarios for deepen-since and deepen-not.
+  - Extended `server/tests/git_http_v2_trace_diff.sh` with `deepen-since` and `deepen-not`; validated vs baseline using the existing normalizer.
+- DONE: Edge-case hardening for filters with symlinks/submodules.
+  - Added `server/tests/git_http_v2_filter_symlink_submodule.sh` to assert symlink and submodule entries are preserved under filters.
+- Docs
+  - After CI confirms these pass in the matrix, mark Phase B as complete and enable filters by default.
+
 ## HTTP Behavior & Limits (Planned)
 - Headers: set `Content-Type: application/x-git-upload-pack-result` for pack responses; no cache for pack streams.
 - Status codes: 200 on success; 4xx for client errors (malformed pkt-line, limit exceeded); 5xx for server faults.

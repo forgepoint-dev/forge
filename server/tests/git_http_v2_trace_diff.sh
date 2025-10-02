@@ -14,7 +14,7 @@ REPO_NAME=${REPO_NAME:-alpha}
 TRACE_DIR=${TRACE_DIR:-/tmp/git-http-v2-traces}
 
 # Scenarios to run (space-separated): simple-clone, shallow-clone, incremental-fetch,
-# partial-blob-none, partial-tree-1, partial-blob-limit
+# deepen-since, deepen-not, partial-blob-none, partial-tree-1, partial-blob-limit
 TRACE_SCENARIOS=${TRACE_SCENARIOS:-"simple-clone"}
 
 mkdir -p "$TRACE_DIR"
@@ -36,7 +36,7 @@ start_server() {
     FORGE_GIT_HTTP_EXPORT_ALL=true \
     FORGE_GIT_SMART_V2_BACKEND="$backend" \
     FORGE_LISTEN_ADDR="127.0.0.1:$PORT" \
-    cargo run --manifest-path server/Cargo.toml --bin server >/tmp/forge-server.log 2>&1 &
+    nix develop --impure -c cargo run --manifest-path server/Cargo.toml --bin server >/tmp/forge-server.log 2>&1 &
     SERVER_PID=$!
     echo "$SERVER_PID" > /tmp/forge-server.pid
   )
@@ -56,9 +56,17 @@ prepare_repo() {
   touch "$REPOS_DIR/$REPO_NAME.git/git-daemon-export-ok"
   TMP=$(mktemp -d)
   git -C "$TMP" init >/dev/null
-  echo hello > "$TMP/README.md"
-  git -C "$TMP" add README.md >/dev/null
-  git -C "$TMP" -c user.email=t@e -c user.name=t commit -m init >/dev/null
+  # Create history with dates and tags for deepen-since / deepen-not
+  echo hello > "$TMP/README.md" && git -C "$TMP" add README.md >/dev/null
+  GIT_COMMITTER_DATE="2023-01-01T00:00:00" GIT_AUTHOR_DATE="2023-01-01T00:00:00" \
+    git -C "$TMP" -c user.email=t@e -c user.name=t commit -m init >/dev/null
+  echo a >> "$TMP/README.md" && git -C "$TMP" add README.md >/dev/null
+  GIT_COMMITTER_DATE="2023-06-01T00:00:00" GIT_AUTHOR_DATE="2023-06-01T00:00:00" \
+    git -C "$TMP" -c user.email=t@e -c user.name=t commit -m mid >/dev/null
+  echo b >> "$TMP/README.md" && git -C "$TMP" add README.md >/dev/null
+  GIT_COMMITTER_DATE="2024-01-01T00:00:00" GIT_AUTHOR_DATE="2024-01-01T00:00:00" \
+    git -C "$TMP" -c user.email=t@e -c user.name=t commit -m latest >/dev/null
+  git -C "$TMP" tag -a v1 -m v1 >/dev/null
   git -C "$TMP" branch -M main >/dev/null
   git -C "$TMP" remote add origin "$REPOS_DIR/$REPO_NAME.git"
   git -C "$TMP" push origin main >/dev/null
@@ -70,6 +78,28 @@ capture_simple_clone() {
   GIT_TRACE_PACKET=1 git -c protocol.version=2 ls-remote "$SERVER_URL/$REPO_NAME" 2>>"$raw" >/dev/null
   local DEST; DEST=$(mktemp -d)
   GIT_TRACE_PACKET=1 git -c protocol.version=2 clone "$SERVER_URL/$REPO_NAME" "$DEST/repo" 2>>"$raw" >/dev/null
+  "$TOOLS_DIR/normalize_trace.sh" "$raw" > "$norm"
+}
+
+capture_deepen_since() {
+  local backend="$1"; local dir="$TRACE_DIR/deepen-since"; mkdir -p "$dir"
+  local raw="$dir/$backend.raw"; local norm="$dir/$backend.trace"; : > "$raw"
+  GIT_TRACE_PACKET=1 git -c protocol.version=2 ls-remote "$SERVER_URL/$REPO_NAME" 2>>"$raw" >/dev/null
+  local DEST; DEST=$(mktemp -d)
+  # Choose since date between mid and latest
+  GIT_TRACE_PACKET=1 git -c protocol.version=2 clone --shallow-since="2023-07-01T00:00:00" \
+    "$SERVER_URL/$REPO_NAME" "$DEST/repo" 2>>"$raw" >/dev/null
+  "$TOOLS_DIR/normalize_trace.sh" "$raw" > "$norm"
+}
+
+capture_deepen_not() {
+  local backend="$1"; local dir="$TRACE_DIR/deepen-not"; mkdir -p "$dir"
+  local raw="$dir/$backend.raw"; local norm="$dir/$backend.trace"; : > "$raw"
+  GIT_TRACE_PACKET=1 git -c protocol.version=2 ls-remote "$SERVER_URL/$REPO_NAME" 2>>"$raw" >/dev/null
+  local DEST; DEST=$(mktemp -d)
+  # Exclude tag v1 (the oldest commit)
+  GIT_TRACE_PACKET=1 git -c protocol.version=2 clone --shallow-exclude=v1 \
+    "$SERVER_URL/$REPO_NAME" "$DEST/repo" 2>>"$raw" >/dev/null
   "$TOOLS_DIR/normalize_trace.sh" "$raw" > "$norm"
 }
 
@@ -124,6 +154,8 @@ for scenario in $TRACE_SCENARIOS; do
     simple-clone) capture_simple_clone git ;;
     shallow-clone) capture_shallow_clone git ;;
     incremental-fetch) capture_incremental_fetch git ;;
+    deepen-since) capture_deepen_since git ;;
+    deepen-not) capture_deepen_not git ;;
     partial-blob-none) capture_filter_clone git "blob:none" "partial-blob-none" ;;
     partial-tree-1) capture_filter_clone git "tree:1" "partial-tree-1" ;;
     partial-blob-limit) capture_filter_clone git "blob:limit=1024" "partial-blob-limit" ;;
@@ -137,6 +169,8 @@ for scenario in $TRACE_SCENARIOS; do
     simple-clone) capture_simple_clone rust ;;
     shallow-clone) capture_shallow_clone rust ;;
     incremental-fetch) capture_incremental_fetch rust ;;
+    deepen-since) capture_deepen_since rust ;;
+    deepen-not) capture_deepen_not rust ;;
     partial-blob-none) capture_filter_clone rust "blob:none" "partial-blob-none" ;;
     partial-tree-1) capture_filter_clone rust "tree:1" "partial-tree-1" ;;
     partial-blob-limit) capture_filter_clone rust "blob:limit=1024" "partial-blob-limit" ;;

@@ -58,6 +58,14 @@ bench-git-http-v2:
 test-git-http-v2-deepen:
     nix develop --impure -c bash server/tests/git_http_v2_deepen.sh
 
+# Partial clone filter: blob:none
+test-git-http-v2-partial-blob-none:
+    nix develop --impure -c bash server/tests/git_http_v2_partial_blob_none.sh
+
+# Partial clone filter: tree:1
+test-git-http-v2-filter-tree:
+    nix develop --impure -c bash server/tests/git_http_v2_filter_tree.sh
+
 # Start the Astro + Vue web client in dev mode.
 run-web:
     cd apps/web && nix develop --impure -c bun run dev

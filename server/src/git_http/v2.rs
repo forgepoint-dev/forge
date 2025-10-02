@@ -397,6 +397,28 @@ impl FetchRequest {
             None => false,
         }
     }
+    pub fn filter_tree_depth(&self) -> Option<u32> {
+        match self.filter.as_deref() {
+            Some(s) if s.starts_with("tree:") => s[5..].parse::<u32>().ok(),
+            _ => None,
+        }
+    }
+    pub fn filter_blob_limit(&self) -> Option<usize> {
+        match self.filter.as_deref() {
+            Some(s) if s.starts_with("blob:limit=") => {
+                let v = &s[11..];
+                // support suffixes k,m
+                if let Some(rest) = v.strip_suffix('k') {
+                    rest.parse::<usize>().ok().map(|n| n * 1024)
+                } else if let Some(rest) = v.strip_suffix('m') {
+                    rest.parse::<usize>().ok().map(|n| n * 1024 * 1024)
+                } else {
+                    v.parse::<usize>().ok()
+                }
+            }
+            _ => None,
+        }
+    }
 }
 
 fn parse_fetch(pkts: &[Pkt]) -> anyhow::Result<FetchRequest> {
