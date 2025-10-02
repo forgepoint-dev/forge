@@ -1,6 +1,44 @@
 ---
 import NewIssueForm from '../components/NewIssueForm.vue';
 
+const env = import.meta.env as Record<string, string | undefined>;
+const graphqlEndpoint = env.PUBLIC_FORGE_GRAPHQL_URL ?? 'http://localhost:8000/graphql';
+let base = graphqlEndpoint.replace(/\/graphql$/, '');
+try {
+  const u = new URL(base);
+  if (u.hostname === 'localhost') {
+    u.hostname = '127.0.0.1';
+    base = u.toString().replace(/\/$/, '');
+  }
+} catch {}
+const sanitizedBase = base.endsWith('/') ? base.slice(0, -1) : base;
+const authBase = env.PUBLIC_FORGE_AUTH_LOGIN_URL ?? `${sanitizedBase}/auth/login`;
+function parseCookie(cookies: string, name: string): string | undefined {
+  return cookies
+    .split(';')
+    .map((c) => c.trim())
+    .find((c) => c.startsWith(name + '='))
+    ?.slice(name.length + 1);
+}
+const rawIncoming = Astro.request.headers.get('cookie') ?? '';
+const sessionId = (Astro.cookies?.get?.('forge_session')?.value as string | undefined) ?? parseCookie(rawIncoming, 'forge_session');
+const headers = new Headers();
+if (sessionId) {
+  headers.set('Cookie', `forge_session=${sessionId}`);
+} else if (rawIncoming) {
+  headers.set('Cookie', rawIncoming);
+}
+let authenticated = false;
+try {
+  const res = await fetch(`${sanitizedBase}/auth/me`, { headers });
+  if (res.ok) {
+    const data = await res.json();
+    authenticated = Boolean(data?.authenticated);
+  }
+} catch {}
+const returnTo = encodeURIComponent((Astro.url.origin + Astro.url.pathname));
+const loginHref = `${authBase}?return_to=${returnTo}`;
+
 const repositoryId = Astro.url.searchParams.get('repositoryId') ?? '';
 const repositoryPath = Astro.url.searchParams.get('repositoryPath') ?? '';
 const hasRepositoryId = repositoryId.length > 0;
@@ -24,16 +62,24 @@ const resolvedRepositoryPath = repositoryPath.length > 0 ? repositoryPath : null
 		</header>
 
 		<div class="rounded-lg border border-border bg-card p-6 shadow-sm space-y-4">
+			{!authenticated && (
+				<div class="rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
+					You must be logged in to create issues.
+					<a href={loginHref} class="ml-2 underline hover:no-underline">Login</a>
+				</div>
+			)}
 			{!hasRepositoryId && (
 				<div class="rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
 					We couldn't determine the repository automatically. Provide the full repository path below to continue.
 				</div>
 			)}
-			<NewIssueForm
+			{authenticated && (
+				<NewIssueForm
 				client:load
 				repository-id={resolvedRepositoryId}
 				repository-path={resolvedRepositoryPath}
 			/>
+			)}
 		</div>
 	</div>
 </body>

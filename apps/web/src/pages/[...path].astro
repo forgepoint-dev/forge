@@ -6,10 +6,8 @@ import RepoView from '../components/RepoView.vue'
 // /myrepo, /group/repo, /group/subgroup/repo
 const pathParam = (Astro.params as any).path
 const fullPath = Array.isArray(pathParam) ? pathParam.join('/') : String(pathParam)
-export const prerender = false
 ---
 
 <Layout title={fullPath} description={`${fullPath} repository`}>
   <RepoView fullPath={fullPath} client:load />
 </Layout>
-

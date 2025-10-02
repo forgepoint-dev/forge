@@ -18,6 +18,7 @@ const props = withDefaults(
 
 const menuRef = ref<HTMLElement | null>(null)
 const open = ref(false)
+const authenticated = ref(false)
 
 const filteredActions = computed(() =>
   actionSlots
@@ -95,7 +96,16 @@ function onDocumentClick(event: MouseEvent) {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
+  try {
+    const res = await fetch('/api/auth/me', { credentials: 'include' })
+    if (res.ok) {
+      const data = await res.json().catch(() => ({ authenticated: false }))
+      authenticated.value = Boolean(data?.authenticated)
+    }
+  } catch {
+    authenticated.value = false
+  }
   if (typeof document !== 'undefined') {
     document.addEventListener('click', onDocumentClick)
   }
@@ -109,7 +119,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-if="hasActions" ref="menuRef" class="relative">
+  <div v-if="hasActions && authenticated" ref="menuRef" class="relative">
     <UiButton variant="outline" @click.stop="toggleMenu">
       {{ label }}
       <svg

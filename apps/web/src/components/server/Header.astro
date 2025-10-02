@@ -50,6 +50,16 @@ try {
 if (!user.authenticated && sessionId) {
   user = { authenticated: true } as any;
 }
+if (import.meta.env.DEV) {
+  // Server-side debug: do not log sensitive values
+  const debugInfo = {
+    hasIncomingCookieHeader: Boolean(rawIncoming),
+    detectedSessionCookie: Boolean(sessionId),
+    authEndpoint: `${sanitizedBase}/auth/me`,
+    authenticated: user.authenticated,
+  };
+  console.debug('[Header.astro] auth debug', debugInfo);
+}
 ---
 
 <header class="sticky top-0 z-30 border-b bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -97,6 +107,9 @@ if (!user.authenticated && sessionId) {
       const res = await fetch('/api/auth/me', { credentials: 'include' })
       if (!res.ok) return
       const data = await res.json()
+      if (import.meta.env?.DEV) {
+        console.debug('[Header.astro] client auth check', { ok: res.ok, data })
+      }
       if (data && data.authenticated) {
         // Replace login link with a minimal user menu
         const handle = data.user?.handle || 'Account'

@@ -402,16 +402,14 @@ pub async fn callback_handler(
         });
     if cookie_secure { cookie.push_str("; Secure"); }
     if let Some(ref domain) = cookie_domain { cookie.push_str(&format!("; Domain={}", domain)); }
-    // In loopback dev, explicitly set Domain=127.0.0.1 if host is 127.0.0.1 to help some browsers
-    if cookie_domain.is_none() {
-        if let Ok(host) = std::env::var("FORGE_PUBLIC_BASE_URL") {
-            if host.contains("127.0.0.1") { cookie.push_str("; Domain=127.0.0.1"); }
-        }
-    }
+    // Do NOT set Domain for IP literals like 127.0.0.1. Many browsers ignore or reject
+    // cookies with a Domain attribute that is an IP address (RFC 6265). Omitting Domain
+    // yields a host-only cookie which works across all ports for the host.
     // Default max-age 7 days
     cookie.push_str("; Max-Age=604800");
 
     let mut headers = HeaderMap::new();
+    tracing::debug!(target: "auth", secure = cookie_secure, domain = %cookie_domain.as_deref().unwrap_or("<host-only>"), "callback_handler: setting forge_session cookie");
     headers.insert(header::SET_COOKIE, header::HeaderValue::from_str(&cookie).unwrap_or(header::HeaderValue::from_static("")));
     // Optional debug cookie (non-HttpOnly) to verify presence in devtools
     if std::env::var("FORGE_DEBUG_COOKIES").ok().and_then(|v| v.parse::<bool>().ok()).unwrap_or(false) {
@@ -477,19 +475,32 @@ pub async fn me_handler(
     State(auth_state): State<Arc<AuthState>>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
+    let has_cookie_hdr = headers.get(header::COOKIE).is_some();
+    tracing::debug!(target: "auth", has_cookie_hdr, "me_handler: received request");
     if let Some(cookie_hdr) = headers.get(header::COOKIE).and_then(|v| v.to_str().ok()) {
-        if let Some(session_id) = parse_cookie(cookie_hdr, "forge_session") {
-            if let Ok(Some(session)) = auth_state.session_manager.get_session(&session_id) {
-                let body = serde_json::json!({
-                    "authenticated": true,
-                    "user": {
-                        "did": session.user.did,
-                        "handle": session.user.handle,
-                        "displayName": session.user.display_name,
-                        "avatar": session.user.avatar,
-                    }
-                });
-                return (StatusCode::OK, axum::Json(body)).into_response();
+        let session_id_opt = parse_cookie(cookie_hdr, "forge_session");
+        tracing::debug!(target: "auth", has_cookie_hdr, has_session_cookie = session_id_opt.is_some(), "me_handler: parsed cookie header");
+        if let Some(session_id) = session_id_opt {
+            match auth_state.session_manager.get_session(&session_id) {
+                Ok(Some(session)) => {
+                    tracing::debug!(target: "auth", "me_handler: session found for user");
+                    let body = serde_json::json!({
+                        "authenticated": true,
+                        "user": {
+                            "did": session.user.did,
+                            "handle": session.user.handle,
+                            "displayName": session.user.display_name,
+                            "avatar": session.user.avatar,
+                        }
+                    });
+                    return (StatusCode::OK, axum::Json(body)).into_response();
+                }
+                Ok(None) => {
+                    tracing::debug!(target: "auth", "me_handler: no matching session for cookie");
+                }
+                Err(e) => {
+                    tracing::error!(target: "auth", error = %e, "me_handler: failed to load session");
+                }
             }
         }
     }

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use axum::extract::State;
-use axum::http::{Method, StatusCode};
+use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::{Any, CorsLayer};
 use axum::http::HeaderValue;
+use graphql_parser::query::{Definition, OperationDefinition, Selection, Field};
 
 use super::auth_handlers::{self, AuthState};
 use super::playground::graphql_playground;
@@ -35,8 +36,58 @@ pub struct GraphQLRequest {
 
 pub async fn graphql_handler(
     State(app_state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<GraphQLRequest>,
 ) -> Json<JsonValue> {
+    // If auth is configured, enforce authentication for protected mutations
+    if let Some(auth_state) = &app_state.auth {
+        if let Ok(document) = graphql_parser::parse_query::<String>(&req.query) {
+            // Find the first operation (or matching by name)
+            let op = document.definitions.iter().find_map(|d| match d {
+                Definition::Operation(op) => Some(op),
+                _ => None,
+            });
+
+            if let Some(OperationDefinition::Mutation(mutation)) = op {
+                // Top-level fields in the mutation selection set
+                let mut requested_fields: Vec<String> = Vec::new();
+                for sel in &mutation.selection_set.items {
+                    if let Selection::Field(Field { name, .. }) = sel { requested_fields.push(name.clone()); }
+                }
+                // Mutations that require an authenticated session
+                let protected: [&str; 5] = [
+                    "createRepository",
+                    "linkRemoteRepository",
+                    "createGroup",
+                    "createIssue",
+                    "updateIssue",
+                ];
+                let needs_auth = requested_fields.iter().any(|f| protected.contains(&f.as_str()));
+                if needs_auth {
+                    // Extract forge_session cookie and verify session exists
+                    let mut authed = false;
+                    if let Some(cookie_hdr) = headers.get(header::COOKIE).and_then(|v| v.to_str().ok()) {
+                        if let Some(session_id) = parse_cookie(cookie_hdr, "forge_session") {
+                            if auth_state.session_manager.get_session(&session_id).ok().flatten().is_some() {
+                                authed = true;
+                            }
+                        }
+                    }
+                    if !authed {
+                        let msg = format!(
+                            "Authentication required for mutations: {}",
+                            requested_fields
+                                .into_iter()
+                                .filter(|f| protected.contains(&f.as_str()))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        );
+                        return Json(graphql_error_body(msg));
+                    }
+                }
+            }
+        }
+    }
     let exec_request = match GraphQLExecutionRequest::from_payload(&req) {
         Ok(req) => req,
         Err(err) => return Json(graphql_error_body(err.to_string())),
@@ -84,11 +135,15 @@ pub fn build_api_router(app_state: AppState) -> Router {
             .allow_origin(values)
             .allow_headers(Any)
             .allow_methods([Method::POST, Method::OPTIONS, Method::GET])
+            .allow_credentials(true)
     } else {
+        // Default permissive CORS for development; cookies may not be accepted by browsers
+        // unless FORGE_CORS_ORIGINS is set to a specific origin.
         CorsLayer::new()
             .allow_origin(Any)
             .allow_headers(Any)
             .allow_methods([Method::POST, Method::OPTIONS, Method::GET])
+            .allow_credentials(true)
     };
 
     router.layer(cors_layer).with_state(app_state)
@@ -199,6 +254,13 @@ fn graphql_error_body(message: String) -> JsonValue {
             JsonValue::String(message),
         )]))]),
     )]))
+}
+
+fn parse_cookie(cookies: &str, name: &str) -> Option<String> {
+    cookies
+        .split(';')
+        .map(|c| c.trim())
+        .find_map(|c| c.strip_prefix(&format!("{}=", name)).map(|v| v.to_string()))
 }
 async fn auth_me_handler(State(app_state): State<AppState>, headers: axum::http::HeaderMap) -> axum::response::Response {
     if let Some(auth_state) = app_state.auth {

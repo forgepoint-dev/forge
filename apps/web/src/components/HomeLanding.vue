@@ -33,6 +33,7 @@ const error = ref<string | null>(null)
 
 const showCreateDialog = ref(false)
 const showLinkDialog = ref(false)
+const authenticated = ref(false)
 
 const hasRepos = computed(() => repos.value.length > 0)
 
@@ -107,6 +108,18 @@ async function loadData() {
   }
 }
 
+async function loadAuth() {
+  try {
+    const res = await fetch('/api/auth/me', { credentials: 'include' })
+    if (res.ok) {
+      const data = await res.json().catch(() => ({ authenticated: false }))
+      authenticated.value = Boolean(data?.authenticated)
+    }
+  } catch {
+    authenticated.value = false
+  }
+}
+
 async function createRepository(data: { slug: string; groupId?: string }) {
   try {
     const mutation = /* GraphQL */ `
@@ -161,7 +174,7 @@ async function linkRepository(data: { url: string }) {
 }
 
 onMounted(async () => {
-  await loadData()
+  await Promise.all([loadAuth(), loadData()])
 })
 const authLoginUrl = (() => {
   const env = import.meta.env as Record<string, string | undefined>
@@ -187,12 +200,19 @@ const authLoginUrl = (() => {
         <div class="flex items-center justify-between mb-6">
           <h2 class="text-2xl font-semibold">Repositories</h2>
           <div class="flex gap-2">
-            <UiButton @click="showCreateDialog = true">
-              Create Repository
-            </UiButton>
-            <UiButton variant="outline" @click="showLinkDialog = true">
-              Link Repository
-            </UiButton>
+            <template v-if="authenticated">
+              <UiButton @click="showCreateDialog = true">
+                Create Repository
+              </UiButton>
+              <UiButton variant="outline" @click="showLinkDialog = true">
+                Link Repository
+              </UiButton>
+            </template>
+            <template v-else>
+              <a :href="`${authLoginUrl}?return_to=${encodeURIComponent(location.href)}`" class="inline-flex items-center justify-center gap-2 h-9 px-4 rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90">
+                Register / Login
+              </a>
+            </template>
           </div>
         </div>
         <div class="grid gap-3">

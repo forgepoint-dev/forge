@@ -1,6 +1,7 @@
 ---
 const env = import.meta.env as Record<string, string | undefined>;
 const override = env.PUBLIC_FORGE_AUTH_LOGIN_URL;
+export const prerender = false;
 
 function computeTarget(): string {
   if (override) return override;
