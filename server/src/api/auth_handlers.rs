@@ -227,6 +227,7 @@ mod tests {
             client_id: "http://localhost".into(),
             client_secret: None,
             redirect_uri: "http://localhost:8000/auth/callback".into(),
+            scope: "atproto".into(),
         };
         let oauth_client = AtProtoAuthClient::new(config).unwrap();
         let store = SqliteAuthStore::new(tempdir().unwrap().path().join("auth.db").to_str().unwrap()).await.unwrap();

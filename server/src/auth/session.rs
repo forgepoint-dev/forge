@@ -190,7 +190,7 @@ mod tests {
         let manager = SessionManager::new();
         let user = User::new("did:plc:test123".to_string(), "testuser.bsky.social".to_string());
         
-        let session_id = manager.create_session(user.clone(), "token123".to_string(), None).unwrap();
+        let session_id = manager.create_session(user.clone(), "token123".to_string(), None, None, None).unwrap();
         
         let session = manager.get_session("invalid-id").unwrap();
         assert!(session.is_none());
@@ -205,8 +205,8 @@ mod tests {
         let user1 = User::new("did:plc:user1".to_string(), "user1.bsky.social".to_string());
         let user2 = User::new("did:plc:user2".to_string(), "user2.bsky.social".to_string());
         
-        manager.create_session(user1.clone(), "token1".to_string(), None).unwrap();
-        manager.create_session(user2.clone(), "token2".to_string(), None).unwrap();
+        manager.create_session(user1.clone(), "token1".to_string(), None, None, None).unwrap();
+        manager.create_session(user2.clone(), "token2".to_string(), None, None, None).unwrap();
         
         let all_sessions = manager.get_all_sessions().unwrap();
         assert_eq!(all_sessions.len(), 2);

@@ -148,8 +148,6 @@ pub fn build_api_router(app_state: AppState) -> Router {
 
     router.layer(cors_layer).with_state(app_state)
 }
-
-<<<<<<< HEAD
 // Wrapper handlers that extract auth state from AppState
 async fn auth_login_handler(
     State(app_state): State<AppState>,

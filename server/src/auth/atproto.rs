@@ -583,7 +583,7 @@ mod tests {
     #[test]
     fn test_dpop_proof_contains_jwk_and_nonce() {
         let (pkcs8, jwk) = AtProtoAuthClient::generate_p256_keypair_jwk().unwrap();
-        let client = AtProtoAuthClient::new(AuthConfig { client_id: "".into(), client_secret: None, redirect_uri: "http://localhost".into() }).unwrap();
+        let client = AtProtoAuthClient::new(AuthConfig { client_id: "".into(), client_secret: None, redirect_uri: "http://localhost".into(), scope: "atproto".into() }).unwrap();
         let jwt = client.generate_dpop_proof_es256(&pkcs8, &jwk, "POST", "https://example.com/token", Some("NONCE"), Some("token")).unwrap();
         let parts: Vec<&str> = jwt.split('.').collect();
         assert_eq!(parts.len(), 3);
