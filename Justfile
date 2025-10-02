@@ -54,6 +54,10 @@ test-git-http-v2-diff:
 bench-git-http-v2:
     nix develop --impure -c bash server/tests/git_http_v2_bench.sh
 
+# Deepen flow (shallow clone then fetch --deepen)
+test-git-http-v2-deepen:
+    nix develop --impure -c bash server/tests/git_http_v2_deepen.sh
+
 # Start the Astro + Vue web client in dev mode.
 run-web:
     cd apps/web && nix develop --impure -c bun run dev

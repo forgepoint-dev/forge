@@ -365,6 +365,7 @@ pub struct FetchRequest {
     wants: Vec<String>,
     want_refs: Vec<String>,
     haves: Vec<String>,
+    client_shallows: Vec<String>,
     thin_pack: bool,
     ofs_delta: bool,
     side_band_64k: bool,
@@ -386,6 +387,7 @@ impl FetchRequest {
     pub fn haves(&self) -> &[String] { &self.haves }
     pub fn no_progress(&self) -> bool { self.no_progress }
     pub fn want_refs(&self) -> &[String] { &self.want_refs }
+    pub fn client_shallows(&self) -> &[String] { &self.client_shallows }
     pub fn deepen(&self) -> Option<u32> { self.deepen }
     pub fn deepen_since(&self) -> Option<i64> { self.deepen_since }
     pub fn deepen_not(&self) -> &[String] { &self.deepen_not }
@@ -408,6 +410,7 @@ fn parse_fetch(pkts: &[Pkt]) -> anyhow::Result<FetchRequest> {
         if let Some(rest) = s.strip_prefix("want-ref ") { req.want_refs.push(rest.to_string()); continue; }
         if let Some(rest) = s.strip_prefix("want-refs ") { for r in rest.split(' ') { if !r.is_empty() { req.want_refs.push(r.to_string()); } } continue; }
         if let Some(rest) = s.strip_prefix("have ") { req.haves.push(rest.to_string()); continue; }
+        if let Some(rest) = s.strip_prefix("shallow ") { req.client_shallows.push(rest.to_string()); continue; }
         if s == "thin-pack" { req.thin_pack = true; continue; }
         if s == "ofs-delta" { req.ofs_delta = true; continue; }
         if s == "side-band-64k" { req.side_band_64k = true; continue; }

@@ -94,9 +94,19 @@ pub async fn serve_fetch(repo_dir: &PathBuf, req: &FetchRequest, _headers: &Head
     // Optional shallow-info section if client requested shallow/deepen semantics.
     if req_effective.shallow_requested() {
         let _ = tx.send(Bytes::from(encode_pkt_line(b"shallow-info\n"))).await;
+        // New shallow tips after this fetch
         for oid in &plan.shallows {
             let line = format!("shallow {}\n", oid);
             let _ = tx.send(Bytes::from(encode_pkt_line(line.as_bytes()))).await;
+        }
+        // Commits that were previously shallow on the client but are no longer shallow
+        use std::collections::HashSet as HS;
+        let new_set: HS<String> = plan.shallows.iter().map(|o| o.to_string()).collect();
+        for s in req_effective.client_shallows() {
+            if !new_set.contains(s) {
+                let line = format!("unshallow {}\n", s);
+                let _ = tx.send(Bytes::from(encode_pkt_line(line.as_bytes()))).await;
+            }
         }
         let _ = tx.send(Bytes::from_static(PKT_DELIM)).await;
     }
@@ -379,11 +389,24 @@ fn plan_pack(repo_dir: PathBuf, req: &FetchRequest) -> anyhow::Result<PackPlan> 
         if let Ok(oid) = gix::hash::ObjectId::from_hex(h.as_bytes()) { have_set.insert(oid); }
     }
 
-    // Exclusions from deepen-not (approximate: stop at tip of each ref)
+    // Exclusions from deepen-not: build full reachable set from each excluded ref tip
     let mut exclude: HashSet<gix::hash::ObjectId> = HashSet::new();
     for r in req.deepen_not().iter() {
         if let Ok(reference) = repo.find_reference(r) {
-            if let Some(idref) = reference.try_id() { exclude.insert(idref.detach()); }
+            if let Some(idref) = reference.try_id() {
+                let tip = idref.detach();
+                let mut q: VecDeque<gix::hash::ObjectId> = VecDeque::new();
+                q.push_back(tip);
+                while let Some(id) = q.pop_front() {
+                    if !exclude.insert(id) { continue; }
+                    if let Ok(obj) = repo.find_object(id) {
+                        if obj.kind == gix::objs::Kind::Commit {
+                            let (_, parents) = parse_commit_raw(obj.data.as_ref())?;
+                            for p in parents { q.push_back(p); }
+                        }
+                    }
+                }
+            }
         }
     }
 
