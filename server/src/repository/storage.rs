@@ -24,9 +24,12 @@ impl RepositoryStorage {
             path.push(segment);
         }
 
+        tracing::info!("ensure_local_repository query: {}", path.display());
         if path.is_dir() {
+            tracing::info!("ensure_local_repository found: {}", path.display());
             Ok(path)
         } else {
+            tracing::info!("ensure_local_repository missing: {}", path.display());
             Err(anyhow::anyhow!(
                 "repository directory not found at {}",
                 path.display()

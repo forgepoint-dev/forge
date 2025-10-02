@@ -26,6 +26,34 @@ run-server:
         FORGE_EXTENSIONS_DIR={{FORGE_EXTENSIONS_DIR}} \
         nix develop --impure -c cargo run --manifest-path server/Cargo.toml --bin server
 
+# Run Smart HTTP v2 e2e tests (ls-remote + clone via git backend)
+test-git-http-v2:
+    nix develop --impure -c bash server/tests/git_http_v2_clone.sh
+
+test-git-http-v2-shallow:
+    nix develop --impure -c bash server/tests/git_http_v2_shallow.sh
+
+test-git-http-v2-fetch:
+    nix develop --impure -c bash server/tests/git_http_v2_fetch_update.sh
+
+test-git-http-v2-concurrency:
+    nix develop --impure -c bash server/tests/git_http_v2_concurrency.sh
+
+test-git-http-v2-visibility:
+    nix develop --impure -c bash server/tests/git_http_v2_visibility.sh
+
+# Rust backend e2e (pure-Rust pack + ls-refs)
+test-git-http-v2-rust:
+    nix develop --impure -c bash server/tests/git_http_v2_rust_backend.sh
+
+# Packet trace normalization + diff (baseline vs. rust)
+test-git-http-v2-diff:
+    nix develop --impure -c bash server/tests/git_http_v2_trace_diff.sh
+
+# Simple clone benchmark (baseline vs. rust). Override BENCH_* envs as needed.
+bench-git-http-v2:
+    nix develop --impure -c bash server/tests/git_http_v2_bench.sh
+
 # Start the Astro + Vue web client in dev mode.
 run-web:
     cd apps/web && nix develop --impure -c bun run dev

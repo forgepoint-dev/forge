@@ -1,0 +1,97 @@
+name: Git Smart HTTP v2 Parity
+
+on:
+  pull_request:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  parity:
+    name: Smart HTTP v2 (git + rust)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v12
+
+      - name: Enable Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@v7
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-target-
+
+      - name: Prefetch Rust deps
+        run: nix develop --impure -c cargo fetch
+
+      - name: Baseline (git backend) — clone
+        run: nix develop --impure -c bash server/tests/git_http_v2_clone.sh
+
+      - name: Baseline (git backend) — shallow clone
+        run: nix develop --impure -c bash server/tests/git_http_v2_shallow.sh
+
+      - name: Baseline (git backend) — incremental fetch
+        run: nix develop --impure -c bash server/tests/git_http_v2_fetch_update.sh
+
+      - name: Baseline (git backend) — concurrency
+        env:
+          N: 4
+        run: nix develop --impure -c bash server/tests/git_http_v2_concurrency.sh
+
+      - name: Baseline (git backend) — visibility (export-ok)
+        run: nix develop --impure -c bash server/tests/git_http_v2_visibility.sh
+
+      - name: Rust backend — end-to-end
+        run: nix develop --impure -c bash server/tests/git_http_v2_rust_backend.sh
+
+      - name: Packet trace diff (git vs rust)
+        env:
+          TRACE_SCENARIOS: "simple-clone shallow-clone incremental-fetch"
+        run: nix develop --impure -c bash server/tests/git_http_v2_trace_diff.sh
+
+      - name: Benchmark clone (git vs rust)
+        continue-on-error: true
+        env:
+          BENCH_RUNS: 5
+          BENCH_THRESHOLD: 1.20
+          BENCH_ENFORCE: 0
+          BENCH_SCENARIOS: "simple-clone shallow-clone"
+        run: nix develop --impure -c bash server/tests/git_http_v2_bench.sh
+
+      - name: Upload debug logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smart-http-v2-debug-logs
+          path: |
+            /tmp/forge-server.log
+            /tmp/*.err
+            /tmp/*.out
+          if-no-files-found: ignore
+
+      - name: Upload traces and bench results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smart-http-v2-traces-and-bench
+          path: |
+            /tmp/git-http-v2-traces
+            /tmp/git-http-v2-bench
+          if-no-files-found: ignore
