@@ -366,7 +366,7 @@ fn parse_commit_meta(data: &[u8]) -> anyhow::Result<(gix::hash::ObjectId, Vec<gi
             // We find the penultimate space-separated token as timestamp
             let parts: Vec<&[u8]> = rest.split(|b| *b == b' ').collect();
             if parts.len() >= 2 {
-                if let Ok(val) = std::str::from_utf8(parts[parts.len()-2]).ok().and_then(|s| s.parse::<i64>().ok()) { ts = Some(val); }
+                if let Some(val) = std::str::from_utf8(parts[parts.len()-2]).ok().and_then(|s| s.parse::<i64>().ok()) { ts = Some(val); }
             }
         }
     }
@@ -619,14 +619,16 @@ async fn emit_acknowledgments(repo_dir: &PathBuf, req: &FetchRequest, tx: &mpsc:
 async fn resolve_want_refs(repo_dir: &PathBuf, req: &mut FetchRequest) -> anyhow::Result<()> {
     use gix::prelude::*;
     let repo = gix::open(repo_dir)?;
+    let mut new_wants = Vec::new();
     for r in req.want_refs().iter() {
-        if let Ok(reference) = repo.find_reference(r) {
+        if let Ok(mut reference) = repo.find_reference(r) {
             if let Some(idref) = reference.try_id() {
-                req.wants.push(idref.to_string());
+                new_wants.push(idref.to_string());
             } else if let Ok(commit) = reference.peel_to_commit() {
-                req.wants.push(commit.id().to_string());
+                new_wants.push(commit.id().to_string());
             }
         }
     }
+    req.wants().to_vec().extend(new_wants);
     Ok(())
 }

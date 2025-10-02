@@ -72,6 +72,11 @@
 
             packages = [
               pkgs.openssl.dev
+              pkgs.gcc
+              pkgs.stdenv.cc
+              pkgs.pkg-config
+              pkgs.gnumake
+              pkgs.clang
               # WASM tooling for extension development
               pkgs.cargo-component # Component model tooling
               pkgs.wasm-tools # WASM validation and inspection

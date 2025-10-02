@@ -75,6 +75,7 @@ export default function issuesIntegration(options?: IssuesIntegrationOptions): A
 						componentPath: resolve(__dirname, './components/IssuesTab.vue'),
 						order: 10,
 					});
+					if (options?.slotRegistry?.actions) {
 					options.slotRegistry.actions.push({
 						id: 'issues.new',
 						label: 'New Issue',
@@ -83,6 +84,7 @@ export default function issuesIntegration(options?: IssuesIntegrationOptions): A
 						kind: 'link',
 						href: '/{repository.fullPath}/issues/new',
 					});
+				}
 				}
 			},
 		},

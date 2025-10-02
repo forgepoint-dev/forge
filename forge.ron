@@ -1,0 +1,10 @@
+Config(
+    extensions: Extensions(
+        local: [
+            LocalExtension(
+                name: "issues",
+                path: "./extensions/issues/api/target/wasm32-wasip1/release/forgepoint_extension_issues.wasm",
+            ),
+        ],
+    ),
+)
