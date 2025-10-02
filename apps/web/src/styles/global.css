@@ -37,33 +37,33 @@
 	}
 
 	.dark {
-		/* Rose Pine Main */
-		--background: 249 22% 12%; /* #191724 */
+		/* Rose Pine Moon */
+		--background: 246 24% 17%; /* #232136 */
 		--foreground: 245 50% 91%; /* #e0def4 */
 
-		--card: 249 22% 12%;
+		--card: 246 24% 17%;
 		--card-foreground: 245 50% 91%;
 
-		--popover: 249 22% 12%;
+		--popover: 246 24% 17%;
 		--popover-foreground: 245 50% 91%;
 
 		--primary: 267 57% 78%; /* #c4a7e7 */
-		--primary-foreground: 249 22% 12%;
+		--primary-foreground: 246 24% 17%;
 
-		--secondary: 247 23% 15%; /* #26233a */
+		--secondary: 248 24% 20%; /* #2a273f */
 		--secondary-foreground: 245 50% 91%;
 
-		--muted: 247 23% 15%;
-		--muted-foreground: 248 25% 70%; /* #6e6a86 */
+		--muted: 249 12% 47%; /* #6e6a86 */
+		--muted-foreground: 249 12% 47%;
 
-		--accent: 247 23% 15%;
+		--accent: 248 21% 26%; /* #393552 */
 		--accent-foreground: 245 50% 91%;
 
 		--destructive: 343 76% 68%; /* #eb6f92 */
 		--destructive-foreground: 245 50% 91%;
 
-		--border: 247 23% 15%;
-		--input: 247 23% 15%;
+		--border: 248 24% 20%;
+		--input: 248 24% 20%;
 		--ring: 267 57% 78%;
 	}
 

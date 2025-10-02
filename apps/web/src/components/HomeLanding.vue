@@ -162,6 +162,19 @@ async function linkRepository(data: { url: string }) {
 onMounted(async () => {
   await loadData()
 })
+const authLoginUrl = (() => {
+  const env = import.meta.env as Record<string, string | undefined>
+  const override = env.PUBLIC_FORGE_AUTH_LOGIN_URL
+  if (override) {
+    return override
+  }
+
+  const graphqlEndpoint = env.PUBLIC_FORGE_GRAPHQL_URL ?? 'http://localhost:8000/graphql'
+  const base = graphqlEndpoint.replace(/\/graphql$/, '')
+  const sanitizedBase = base.ends_with('/') ? base.slice(0, -1) : base
+  return `${sanitizedBase}/auth/login`
+})()
+
 </script>
 
 <template>
@@ -182,7 +195,11 @@ onMounted(async () => {
             </kbd>
           </div>
         </div>
-        <div class="w-12" />
+        <div class="flex items-center justify-end gap-2">
+          <UiButton as="a" :href="authLoginUrl" size="sm">
+            Register / Login
+          </UiButton>
+        </div>
       </div>
     </header>
     <!-- Repositories -->
