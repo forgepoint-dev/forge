@@ -46,6 +46,8 @@ jsonwebtoken = "9"
 hmac = "0.12"
 rand = "0.8"
 urlencoding = "2"
+ring = "0.17"
+p256 = { version = "0.13", features = ["pkcs8"] }
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3.0"

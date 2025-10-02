@@ -8,6 +8,7 @@ use serde_json::Value as JsonValue;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::{Any, CorsLayer};
+use axum::http::HeaderValue;
 
 use super::auth_handlers::{self, AuthState};
 use super::playground::graphql_playground;
@@ -62,24 +63,45 @@ pub fn build_api_router(app_state: AppState) -> Router {
             .route("/auth/login", get(auth_login_handler))
             .route("/auth/authorize", post(auth_authorize_handler))
             .route("/auth/callback", get(auth_callback_handler))
-            .route("/auth/logout", get(auth_logout_handler));
+            .route("/auth/logout", get(auth_logout_handler))
+            .route("/auth/me", get(auth_me_handler))
+            .route("/health/auth", get(auth_health_handler))
+            .route("/admin/auth/vacuum", get(auth_vacuum_handler));
     }
 
-    router
-        .layer(
-            CorsLayer::new()
-                .allow_origin(Any)
-                .allow_headers(Any)
-                .allow_methods([Method::POST, Method::OPTIONS, Method::GET]),
-        )
-        .with_state(app_state)
+    // Client metadata endpoint for dynamic OAuth public client
+    if app_state.auth.is_some() {
+        router = router.route("/client-metadata.json", get(auth_client_metadata_handler));
+    }
+
+    // Configure CORS from env (comma-separated origins). Default: allow Any for dev.
+    let cors_layer = if let Ok(origins) = std::env::var("FORGE_CORS_ORIGINS") {
+        let values: Vec<HeaderValue> = origins
+            .split(',')
+            .filter_map(|s| HeaderValue::from_str(s.trim()).ok())
+            .collect();
+        CorsLayer::new()
+            .allow_origin(values)
+            .allow_headers(Any)
+            .allow_methods([Method::POST, Method::OPTIONS, Method::GET])
+    } else {
+        CorsLayer::new()
+            .allow_origin(Any)
+            .allow_headers(Any)
+            .allow_methods([Method::POST, Method::OPTIONS, Method::GET])
+    };
+
+    router.layer(cors_layer).with_state(app_state)
 }
 
 <<<<<<< HEAD
 // Wrapper handlers that extract auth state from AppState
-async fn auth_login_handler(State(app_state): State<AppState>) -> axum::response::Response {
+async fn auth_login_handler(
+    State(app_state): State<AppState>,
+    query: axum::extract::Query<auth_handlers::LoginQuery>,
+) -> axum::response::Response {
     if let Some(auth_state) = app_state.auth {
-        auth_handlers::login_handler(State(auth_state)).await.into_response()
+        auth_handlers::login_handler(State(auth_state), query).await.into_response()
     } else {
         (StatusCode::NOT_FOUND, "Authentication not configured").into_response()
     }
@@ -99,9 +121,10 @@ async fn auth_authorize_handler(
 async fn auth_callback_handler(
     State(app_state): State<AppState>,
     query: axum::extract::Query<auth_handlers::OAuthCallback>,
+    headers: axum::http::HeaderMap,
 ) -> axum::response::Response {
     if let Some(auth_state) = app_state.auth {
-        auth_handlers::callback_handler(State(auth_state), query).await.into_response()
+        auth_handlers::callback_handler(State(auth_state), query, headers).await.into_response()
     } else {
         (StatusCode::NOT_FOUND, "Authentication not configured").into_response()
     }
@@ -110,9 +133,18 @@ async fn auth_callback_handler(
 async fn auth_logout_handler(
     State(app_state): State<AppState>,
     query: axum::extract::Query<auth_handlers::LogoutQuery>,
+    headers: axum::http::HeaderMap,
 ) -> axum::response::Response {
     if let Some(auth_state) = app_state.auth {
-        auth_handlers::logout_handler(State(auth_state), query).await.into_response()
+        auth_handlers::logout_handler(State(auth_state), query, headers).await.into_response()
+    } else {
+        (StatusCode::NOT_FOUND, "Authentication not configured").into_response()
+    }
+}
+
+async fn auth_client_metadata_handler(State(app_state): State<AppState>) -> axum::response::Response {
+    if let Some(auth_state) = app_state.auth {
+        super::auth_handlers::client_metadata_handler(State(auth_state)).await.into_response()
     } else {
         (StatusCode::NOT_FOUND, "Authentication not configured").into_response()
     }
@@ -167,4 +199,27 @@ fn graphql_error_body(message: String) -> JsonValue {
             JsonValue::String(message),
         )]))]),
     )]))
+}
+async fn auth_me_handler(State(app_state): State<AppState>, headers: axum::http::HeaderMap) -> axum::response::Response {
+    if let Some(auth_state) = app_state.auth {
+        auth_handlers::me_handler(State(auth_state), headers).await.into_response()
+    } else {
+        (StatusCode::NOT_FOUND, "Authentication not configured").into_response()
+    }
+}
+
+async fn auth_health_handler(State(app_state): State<AppState>) -> axum::response::Response {
+    if let Some(auth_state) = app_state.auth {
+        super::auth_handlers::auth_health_handler(State(auth_state)).await.into_response()
+    } else {
+        (StatusCode::NOT_FOUND, "Authentication not configured").into_response()
+    }
+}
+
+async fn auth_vacuum_handler(State(app_state): State<AppState>) -> axum::response::Response {
+    if let Some(auth_state) = app_state.auth {
+        super::auth_handlers::auth_vacuum_handler(State(auth_state)).await.into_response()
+    } else {
+        (StatusCode::NOT_FOUND, "Authentication not configured").into_response()
+    }
 }

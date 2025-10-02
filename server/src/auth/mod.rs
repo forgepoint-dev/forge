@@ -5,9 +5,11 @@
 
 pub mod session;
 pub mod atproto;
+pub mod store;
 
 pub use session::{Session, SessionManager};
 pub use atproto::{AtProtoAuthClient, AuthConfig};
+pub use store::{SqliteAuthStore, AuthFlowRecord};
 
 use serde::{Deserialize, Serialize};
 

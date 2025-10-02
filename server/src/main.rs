@@ -17,7 +17,7 @@ use supervisor::Supervisor;
 
 use api::auth_handlers::AuthState;
 use api::run_api;
-use auth::{AtProtoAuthClient, AuthConfig, SessionManager};
+use auth::{AtProtoAuthClient, AuthConfig, SessionManager, SqliteAuthStore};
 use repository::RepositoryStorage;
 use router::RouterState;
 
@@ -99,10 +99,54 @@ async fn main() -> anyhow::Result<()> {
             .context("Failed to initialise router state")?,
     );
 
-    // Initialize authentication if configured
-    let auth_state = initialize_auth();
+    // Initialize authentication (public client by default)
+    let auth_state = initialize_auth_async().await;
 
     let mut supervisor = Supervisor::new();
+
+    // Spawn auth cleanup task if enabled
+    if let Some(auth_state_arc) = auth_state.clone() {
+        let store_for_clean = auth_state_arc.auth_store.clone();
+        supervisor.spawn("auth-cleaner", move |shutdown| {
+            let store = store_for_clean.clone();
+            async move {
+                let ttl: i64 = std::env::var("FORGE_AUTH_FLOW_TTL_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(30 * 60);
+                let interval_ms: u64 = std::env::var("FORGE_AUTH_CLEAN_INTERVAL_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(5 * 60) * 1000;
+                let mut ticker = tokio::time::interval(std::time::Duration::from_millis(interval_ms));
+                loop {
+                    tokio::select! {
+                        _ = shutdown.cancelled() => { break; }
+                        _ = ticker.tick() => {
+                            match store.prune_older_than(ttl).await {
+                                Ok(n) if n > 0 => tracing::info!("pruned {} stale auth flows", n),
+                                Ok(_) => {},
+                                Err(e) => tracing::warn!("auth flow prune failed: {}", e),
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            }
+        });
+        // Periodic VACUUM/optimize
+        let store_for_vacuum = auth_state_arc.auth_store.clone();
+        supervisor.spawn("auth-vacuum", move |shutdown| {
+            async move {
+                let every_ms: u64 = std::env::var("FORGE_AUTH_VACUUM_INTERVAL_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(6 * 60 * 60) * 1000; // default 6h
+                let mut ticker = tokio::time::interval(std::time::Duration::from_millis(every_ms));
+                loop {
+                    tokio::select! {
+                        _ = shutdown.cancelled() => { break; }
+                        _ = ticker.tick() => {
+                            if let Err(e) = store_for_vacuum.vacuum().await { tracing::warn!("auth vacuum failed: {}", e); }
+                            else { tracing::info!("auth db vacuumed"); }
+                        }
+                    }
+                }
+                Ok(())
+            }
+        });
+    }
 
     supervisor.spawn("api", move |shutdown| async move {
         run_api(router_state, auth_state, shutdown).await
@@ -112,26 +156,59 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// Initialize authentication if environment variables are configured
-fn initialize_auth() -> Option<Arc<AuthState>> {
-    let client_id = std::env::var("ATPROTO_CLIENT_ID").ok()?;
-    let client_secret = std::env::var("ATPROTO_CLIENT_SECRET").ok()?;
-    let redirect_uri = std::env::var("ATPROTO_REDIRECT_URI")
-        .unwrap_or_else(|_| "http://localhost:8000/auth/callback".to_string());
+async fn initialize_auth_async() -> Option<Arc<AuthState>> {
+    // Public client by default, with dynamic client metadata URL as client_id
+    let mut redirect_uri = std::env::var("ATPROTO_REDIRECT_URI")
+        .unwrap_or_else(|_| "http://127.0.0.1:8000/auth/callback".to_string());
+    if redirect_uri.contains("://localhost") {
+        let fixed = redirect_uri.replace("://localhost", "://127.0.0.1");
+        tracing::warn!("ATPROTO_REDIRECT_URI uses localhost; rewriting to {} per RFC 8252 loopback guidance", fixed);
+        redirect_uri = fixed;
+    }
 
-    tracing::info!("Initializing ATProto OAuth authentication");
+    // Compute base URL for the server to host client metadata
+    let public_base = std::env::var("FORGE_PUBLIC_BASE_URL")
+        .unwrap_or_else(|_| "http://localhost:8000".to_string());
+    let base_trimmed = public_base.trim_end_matches('/').to_string();
+    // Determine scope prior to building client_id for localhost mode
+    let scope = std::env::var("ATPROTO_OAUTH_SCOPE").unwrap_or_else(|_| "atproto".to_string());
+    let client_id = if base_trimmed.contains("://localhost") || base_trimmed.contains("://127.0.0.1") {
+        // Use special localhost client as per ATProto OAuth profile.
+        // Declare redirect_uri (path-sensitive, port ignored) and scope in client_id query.
+        let scope_q = urlencoding::encode(&scope);
+        let enc_redirect = urlencoding::encode(&redirect_uri);
+        format!("http://localhost?redirect_uri={}&scope={}", enc_redirect, scope_q)
+    } else {
+        format!("{}/client-metadata.json", base_trimmed)
+    };
+
+    // Optional secret if someone wants to use client_secret
+    let client_secret = std::env::var("ATPROTO_CLIENT_SECRET").ok();
+
+    tracing::info!("Initializing ATProto OAuth authentication (public client)");
 
     let config = AuthConfig {
         client_id,
         client_secret,
         redirect_uri,
+        scope,
     };
 
     match AtProtoAuthClient::new(config) {
         Ok(oauth_client) => {
             let session_manager = SessionManager::new();
+            let auth_db_path = std::env::var("FORGE_AUTH_DB_PATH").unwrap_or_else(|_| "server/.forge/auth.db".to_string());
+            let auth_store = match SqliteAuthStore::new(&auth_db_path).await {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!("Failed to init auth store: {}", e);
+                    return None;
+                }
+            };
             Some(Arc::new(AuthState {
                 oauth_client,
                 session_manager,
+                auth_store,
             }))
         }
         Err(e) => {

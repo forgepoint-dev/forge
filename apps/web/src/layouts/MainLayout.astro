@@ -6,6 +6,7 @@ interface Props {
 
 const { title = 'Forge', description = 'A modern Git forge for teams and OSS' } = Astro.props as Props;
 import '../styles/global.css';
+import ServerHeader from '../components/server/Header.astro';
 ---
 
 <html lang="en" class="h-full" data-theme="rosepine">
@@ -34,6 +35,7 @@ import '../styles/global.css';
         } catch {}
       })()
     </script>
+    <ServerHeader />
     <slot />
   </body>
   

@@ -23,6 +23,13 @@ export default defineConfig({
 		// Enable Issues extension with slot registration
 		issuesIntegration({ slotRegistry }),
 	],
+	// Ensure dev server is reachable on 127.0.0.1 for cookie-domain alignment
+	server: {
+		host: true,
+	},
+	preview: {
+		host: true,
+	},
 	vite: {
 		plugins: [slotPlugin],
 	},

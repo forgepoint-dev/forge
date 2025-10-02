@@ -20,6 +20,10 @@ pub struct Session {
     pub access_token: String,
     /// Refresh token (if available)
     pub refresh_token: Option<String>,
+    /// DPoP private key (PKCS#8) bound to the access token (optional)
+    pub dpop_pkcs8: Option<Vec<u8>>,
+    /// DPoP public JWK (optional)
+    pub dpop_jwk: Option<String>,
 }
 
 /// Session manager for single-tenant forge
@@ -43,6 +47,8 @@ impl SessionManager {
         user: User,
         access_token: String,
         refresh_token: Option<String>,
+        dpop_pkcs8: Option<Vec<u8>>,
+        dpop_jwk: Option<String>,
     ) -> Result<String> {
         let session_id = Uuid::new_v4().to_string();
         let session = Session {
@@ -50,6 +56,8 @@ impl SessionManager {
             user,
             access_token,
             refresh_token,
+            dpop_pkcs8,
+            dpop_jwk,
         };
 
         let mut sessions = self.sessions.write()
@@ -115,7 +123,7 @@ mod tests {
         let manager = SessionManager::new();
         let user = User::new("did:plc:test123".to_string(), "testuser.bsky.social".to_string());
         
-        let session_id = manager.create_session(user.clone(), "token123".to_string(), None).unwrap();
+        let session_id = manager.create_session(user.clone(), "token123".to_string(), None, None, None).unwrap();
         
         let session = manager.get_session(&session_id).unwrap();
         assert!(session.is_some());
@@ -131,8 +139,8 @@ mod tests {
         let user1 = User::new("did:plc:user1".to_string(), "user1.bsky.social".to_string());
         let user2 = User::new("did:plc:user2".to_string(), "user2.bsky.social".to_string());
         
-        let session_id1 = manager.create_session(user1.clone(), "token1".to_string(), None).unwrap();
-        let session_id2 = manager.create_session(user2.clone(), "token2".to_string(), None).unwrap();
+        let session_id1 = manager.create_session(user1.clone(), "token1".to_string(), None, None, None).unwrap();
+        let session_id2 = manager.create_session(user2.clone(), "token2".to_string(), None, None, None).unwrap();
         
         // Both sessions should exist
         let session1 = manager.get_session(&session_id1).unwrap();
@@ -152,7 +160,7 @@ mod tests {
         let manager = SessionManager::new();
         let user = User::new("did:plc:test123".to_string(), "testuser.bsky.social".to_string());
         
-        let session_id = manager.create_session(user.clone(), "token123".to_string(), None).unwrap();
+        let session_id = manager.create_session(user.clone(), "token123".to_string(), None, None, None).unwrap();
         
         let retrieved_user = manager.get_user(&session_id).unwrap();
         assert!(retrieved_user.is_some());
@@ -165,8 +173,8 @@ mod tests {
         let user1 = User::new("did:plc:user1".to_string(), "user1.bsky.social".to_string());
         let user2 = User::new("did:plc:user2".to_string(), "user2.bsky.social".to_string());
         
-        let session_id1 = manager.create_session(user1.clone(), "token1".to_string(), None).unwrap();
-        let session_id2 = manager.create_session(user2.clone(), "token2".to_string(), None).unwrap();
+        let session_id1 = manager.create_session(user1.clone(), "token1".to_string(), None, None, None).unwrap();
+        let session_id2 = manager.create_session(user2.clone(), "token2".to_string(), None, None, None).unwrap();
         
         // Delete first session
         manager.delete_session(&session_id1).unwrap();

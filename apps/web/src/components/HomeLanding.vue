@@ -180,30 +180,7 @@ const authLoginUrl = (() => {
 
 <template>
   <div class="min-h-screen flex flex-col">
-    <!-- Header -->
-    <header class="sticky top-0 z-30 border-b bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-        <div class="flex items-center gap-3">
-          <div class="size-8 rounded bg-primary/10 text-primary grid place-items-center font-black">
-            F
-          </div>
-          <span class="font-semibold">Forge</span>
-        </div>
-        <div class="hidden md:flex items-center gap-2 flex-1 max-w-xl mx-6">
-          <div class="relative w-full">
-            <UiInput type="search" placeholder="Search or jump to..." />
-            <kbd class="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground border rounded px-1.5 py-0.5">/
-            </kbd>
-          </div>
-        </div>
-        <div class="flex items-center justify-end gap-2">
-          <ThemeSwitcher />
-          <UiButton as="a" :href="authLoginUrl" size="sm">
-            Register / Login
-          </UiButton>
-        </div>
-      </div>
-    </header>
+    <!-- Header moved to server island in layout -->
     <!-- Repositories -->
     <section id="repos" class="">
       <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-16">
