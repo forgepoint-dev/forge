@@ -1,0 +1,130 @@
+---
+const env = import.meta.env as Record<string, string | undefined>;
+const graphqlEndpoint = env.PUBLIC_FORGE_GRAPHQL_URL ?? 'http://localhost:8000/graphql';
+let base = graphqlEndpoint.replace(/\/graphql$/, '');
+// In dev, align host with redirect_uri requirements (127.0.0.1 instead of localhost)
+try {
+  const u = new URL(base);
+  if (u.hostname === 'localhost') {
+    u.hostname = '127.0.0.1';
+    base = u.toString().replace(/\/$/, '');
+  }
+} catch {}
+const sanitizedBase = base.endsWith('/') ? base.slice(0, -1) : base;
+const authBase = env.PUBLIC_FORGE_AUTH_LOGIN_URL ?? `${sanitizedBase}/auth/login`;
+// Canonicalize loopback host so cookies set for 127.0.0.1 apply to the app.
+function canonicalizeReturnTo(u: URL): string {
+  if (u.hostname === 'localhost') {
+    u.hostname = '127.0.0.1';
+  }
+  return u.toString();
+}
+const returnTo = canonicalizeReturnTo(new URL(Astro.url.origin + Astro.url.pathname));
+const loginHref = `${authBase}?return_to=${encodeURIComponent(returnTo)}`;
+
+// Prefer reading the specific session cookie to avoid any proxy/header casing issues
+function parseCookie(cookies: string, name: string): string | undefined {
+  return cookies
+    .split(';')
+    .map((c) => c.trim())
+    .find((c) => c.startsWith(name + '='))
+    ?.slice(name.length + 1);
+}
+const rawIncoming = Astro.request.headers.get('cookie') ?? '';
+const sessionId = (Astro.cookies?.get?.('forge_session')?.value as string | undefined) ?? parseCookie(rawIncoming, 'forge_session');
+const headers = new Headers();
+if (sessionId) {
+  headers.set('Cookie', `forge_session=${sessionId}`);
+} else {
+  const raw = Astro.request.headers.get('cookie');
+  if (raw) headers.set('Cookie', raw);
+}
+let user: { authenticated: boolean; user?: { handle: string; avatar?: string | null } } = { authenticated: false };
+try {
+  const res = await fetch(`${sanitizedBase}/auth/me`, { headers });
+  if (res.ok) {
+    user = await res.json();
+  }
+} catch {}
+// Final fallback: if we have a session cookie but no confirmed user, hide login
+if (!user.authenticated && sessionId) {
+  user = { authenticated: true } as any;
+}
+if (import.meta.env.DEV) {
+  // Server-side debug: do not log sensitive values
+  const debugInfo = {
+    hasIncomingCookieHeader: Boolean(rawIncoming),
+    detectedSessionCookie: Boolean(sessionId),
+    authEndpoint: `${sanitizedBase}/auth/me`,
+    authenticated: user.authenticated,
+  };
+  console.debug('[Header.astro] auth debug', debugInfo);
+}
+---
+
+<header class="sticky top-0 z-30 border-b bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+  <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <div class="size-8 rounded bg-primary/10 text-primary grid place-items-center font-black">F</div>
+      <span class="font-semibold">Forge</span>
+    </div>
+    <div class="hidden md:flex items-center gap-2 flex-1 max-w-xl mx-6">
+      <div class="relative w-full">
+        <input type="search" placeholder="Search or jump to..." class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" />
+        <kbd class="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground border rounded px-1.5 py-0.5">/</kbd>
+      </div>
+    </div>
+    <div class="flex items-center justify-end gap-2" id="fp-auth-root">
+      {user.authenticated ? (
+        <details class="relative">
+          <summary class="list-none flex items-center gap-3 cursor-pointer select-none">
+            {user.user?.avatar ? (
+              <img src={user.user.avatar!} alt="avatar" class="w-8 h-8 rounded-full border" />
+            ) : (
+              <div class="w-8 h-8 rounded-full bg-accent border" />
+            )}
+            <span class="text-sm">{user.user?.handle}</span>
+          </summary>
+          <div class="absolute right-0 mt-2 w-40 rounded-md border bg-background shadow p-1">
+            <a href="/auth/logout" class="block px-3 py-2 rounded hover:bg-accent text-sm">Logout</a>
+          </div>
+        </details>
+      ) : (
+        <a data-role="login" href={loginHref} class="inline-flex items-center justify-center gap-2 h-9 px-4 rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90">Register / Login</a>
+      )}
+    </div>
+  </div>
+  </header>
+
+{/*! Client check: if SSR missed auth, reconcile on load via web proxy */}
+<script is:inline>
+  (async () => {
+    try {
+      const root = document.getElementById('fp-auth-root')
+      if (!root) return
+      const hasLoginLink = !!root.querySelector('[data-role="login"]')
+      if (!hasLoginLink) return
+      const res = await fetch('/api/auth/me', { credentials: 'include' })
+      if (!res.ok) return
+      const data = await res.json()
+      if (import.meta.env?.DEV) {
+        console.debug('[Header.astro] client auth check', { ok: res.ok, data })
+      }
+      if (data && data.authenticated) {
+        // Replace login link with a minimal user menu
+        const handle = data.user?.handle || 'Account'
+        root.innerHTML = `
+          <details class="relative">
+            <summary class="list-none flex items-center gap-3 cursor-pointer select-none">
+              <div class="w-8 h-8 rounded-full bg-accent border" />
+              <span class="text-sm">${handle}</span>
+            </summary>
+            <div class="absolute right-0 mt-2 w-40 rounded-md border bg-background shadow p-1">
+              <a href="/auth/logout" class="block px-3 py-2 rounded hover:bg-accent text-sm">Logout</a>
+            </div>
+          </details>
+        `
+      }
+    } catch {}
+  })()
+</script>

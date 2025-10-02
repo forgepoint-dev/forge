@@ -1,6 +1,42 @@
 ---
 import IssueList from '../components/IssueList.vue';
 
+const env = import.meta.env as Record<string, string | undefined>;
+const graphqlEndpoint = env.PUBLIC_FORGE_GRAPHQL_URL ?? 'http://localhost:8000/graphql';
+let base = graphqlEndpoint.replace(/\/graphql$/, '');
+try {
+  const u = new URL(base);
+  if (u.hostname === 'localhost') {
+    u.hostname = '127.0.0.1';
+    base = u.toString().replace(/\/$/, '');
+  }
+} catch {}
+const sanitizedBase = base.endsWith('/') ? base.slice(0, -1) : base;
+const authBase = env.PUBLIC_FORGE_AUTH_LOGIN_URL ?? `${sanitizedBase}/auth/login`;
+function parseCookie(cookies: string, name: string): string | undefined {
+  return cookies
+    .split(';')
+    .map((c) => c.trim())
+    .find((c) => c.startsWith(name + '='))
+    ?.slice(name.length + 1);
+}
+const rawIncoming = Astro.request.headers.get('cookie') ?? '';
+const sessionId = (Astro.cookies?.get?.('forge_session')?.value as string | undefined) ?? parseCookie(rawIncoming, 'forge_session');
+const headers = new Headers();
+if (sessionId) {
+  headers.set('Cookie', `forge_session=${sessionId}`);
+} else if (rawIncoming) {
+  headers.set('Cookie', rawIncoming);
+}
+let authenticated = false;
+try {
+  const res = await fetch(`${sanitizedBase}/auth/me`, { headers });
+  if (res.ok) {
+    const data = await res.json();
+    authenticated = Boolean(data?.authenticated);
+  }
+} catch {}
+
 const repoParam = (Astro.params as any).repo;
 const repositoryPathFromParams = Array.isArray(repoParam)
 	? repoParam.join('/')
@@ -13,7 +49,7 @@ const repositoryPath = repositoryPathFromParams ?? Astro.url.searchParams.get('r
 const encodedRepositoryId = repositoryId ? encodeURIComponent(repositoryId) : undefined;
 const encodedRepositoryPath = repositoryPath ? encodeURIComponent(repositoryPath) : undefined;
 
-const showNewIssueButton = Boolean(repositoryId || repositoryPath);
+const showNewIssueButton = Boolean((repositoryId || repositoryPath) && authenticated);
 const newIssueHref = (() => {
 	if (repositoryPath) {
 		const sanitized = repositoryPath.replace(/^\/+|\/+$/g, '');

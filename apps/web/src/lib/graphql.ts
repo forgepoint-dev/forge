@@ -16,6 +16,8 @@ export async function graphqlRequest<
 	const response = await fetch(endpoint, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
+		// Include cookies for authenticated mutations across origins
+		credentials: 'include',
 		body: JSON.stringify({ query, variables }),
 	});
 

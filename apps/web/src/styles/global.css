@@ -3,75 +3,140 @@
 @tailwind utilities;
 
 @layer base {
-	:root {
-		/* Rose Pine Light (Dawn) */
-		--background: 32 57% 95%; /* #faf4ed */
-		--foreground: 248 12% 18%; /* #575279 */
+  /* Set both color schemes so native widgets match */
+  :root { color-scheme: light dark; }
 
-		--card: 32 57% 95%;
-		--card-foreground: 248 12% 18%;
+  /* Default brand: Rose Pine (compat with previous styles) */
+  :root,
+  :root[data-theme='rosepine'] {
+    /* Rose Pine Light (Dawn) */
+    --background: 32 57% 95%; /* #faf4ed */
+    --foreground: 248 12% 18%; /* #575279 */
 
-		--popover: 32 57% 95%;
-		--popover-foreground: 248 12% 18%;
+    --card: 32 57% 95%;
+    --card-foreground: 248 12% 18%;
 
-		--primary: 249 12% 47%; /* #907aa9 */
-		--primary-foreground: 32 57% 95%;
+    --popover: 32 57% 95%;
+    --popover-foreground: 248 12% 18%;
 
-		--secondary: 35 58% 92%; /* #f2e9de */
-		--secondary-foreground: 248 12% 18%;
+    --primary: 249 12% 47%; /* #907aa9 */
+    --primary-foreground: 32 57% 95%;
 
-		--muted: 35 58% 92%;
-		--muted-foreground: 248 25% 34%; /* #9893a5 */
+    --secondary: 35 58% 92%; /* #f2e9de */
+    --secondary-foreground: 248 12% 18%;
 
-		--accent: 35 88% 91%; /* #f4ede8 */
-		--accent-foreground: 248 12% 18%;
+    --muted: 35 58% 92%;
+    --muted-foreground: 248 25% 34%; /* #9893a5 */
 
-		--destructive: 343 76% 68%; /* #eb6f92 */
-		--destructive-foreground: 32 57% 95%;
+    --accent: 35 88% 91%; /* #f4ede8 */
+    --accent-foreground: 248 12% 18%;
 
-		--border: 35 58% 85%; /* #dfdad9 */
-		--input: 35 58% 85%;
-		--ring: 249 12% 47%;
+    --destructive: 343 76% 68%; /* #eb6f92 */
+    --destructive-foreground: 32 57% 95%;
 
-		--radius: 0.5rem;
-	}
+    --border: 35 58% 85%; /* #dfdad9 */
+    --input: 35 58% 85%;
+    --ring: 249 12% 47%;
 
-	.dark {
-		/* Rose Pine Main */
-		--background: 249 22% 12%; /* #191724 */
-		--foreground: 245 50% 91%; /* #e0def4 */
+    --radius: 0.5rem;
+  }
 
-		--card: 249 22% 12%;
-		--card-foreground: 245 50% 91%;
+  .dark,
+  .dark[data-theme='rosepine'] {
+    /* Rose Pine Moon */
+    --background: 246 24% 17%; /* #232136 */
+    --foreground: 245 50% 91%; /* #e0def4 */
 
-		--popover: 249 22% 12%;
-		--popover-foreground: 245 50% 91%;
+    --card: 246 24% 17%;
+    --card-foreground: 245 50% 91%;
 
-		--primary: 267 57% 78%; /* #c4a7e7 */
-		--primary-foreground: 249 22% 12%;
+    --popover: 246 24% 17%;
+    --popover-foreground: 245 50% 91%;
 
-		--secondary: 247 23% 15%; /* #26233a */
-		--secondary-foreground: 245 50% 91%;
+    --primary: 267 57% 78%; /* #c4a7e7 */
+    --primary-foreground: 246 24% 17%;
 
-		--muted: 247 23% 15%;
-		--muted-foreground: 248 25% 70%; /* #6e6a86 */
+    --secondary: 248 24% 20%; /* #2a273f */
+    --secondary-foreground: 245 50% 91%;
 
-		--accent: 247 23% 15%;
-		--accent-foreground: 245 50% 91%;
+    --muted: 249 12% 47%; /* #6e6a86 */
+    --muted-foreground: 249 12% 47%;
 
-		--destructive: 343 76% 68%; /* #eb6f92 */
-		--destructive-foreground: 245 50% 91%;
+    --accent: 248 21% 26%; /* #393552 */
+    --accent-foreground: 245 50% 91%;
 
-		--border: 247 23% 15%;
-		--input: 247 23% 15%;
-		--ring: 267 57% 78%;
-	}
+    --destructive: 343 76% 68%; /* #eb6f92 */
+    --destructive-foreground: 245 50% 91%;
 
-	* {
-		@apply border-border;
-	}
+    --border: 248 24% 20%;
+    --input: 248 24% 20%;
+    --ring: 267 57% 78%;
+  }
 
-	body {
-		@apply bg-background text-foreground antialiased;
-	}
+  /* Catppuccin Latte (light) */
+  :root[data-theme='catppuccin'] {
+    --background: 220 23% 95%; /* #eff1f5 approx */
+    --foreground: 234 17% 36%; /* #4c4f69 approx */
+
+    --card: 220 23% 95%;
+    --card-foreground: 234 17% 36%;
+
+    --popover: 220 23% 95%;
+    --popover-foreground: 234 17% 36%;
+
+    --primary: 266 86% 57%; /* #8839ef approx */
+    --primary-foreground: 220 23% 95%;
+
+    --secondary: 220 17% 92%; /* #e6e9ef approx */
+    --secondary-foreground: 234 17% 36%;
+
+    --muted: 231 10% 59%; /* #8c8fa1 approx */
+    --muted-foreground: 231 10% 45%;
+
+    --accent: 220 15% 80%; /* #ccd0da approx */
+    --accent-foreground: 234 17% 36%;
+
+    --destructive: 348 86% 45%; /* #d20f39 approx */
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 15% 80%; /* #ccd0da */
+    --input: 220 15% 80%;
+    --ring: 266 86% 57%;
+
+    --radius: 0.5rem;
+  }
+
+  /* Catppuccin Mocha (dark) */
+  .dark[data-theme='catppuccin'] {
+    --background: 240 22% 15%; /* #1e1e2e approx */
+    --foreground: 226 64% 86%; /* #cdd6f4 approx */
+
+    --card: 240 22% 15%;
+    --card-foreground: 226 64% 86%;
+
+    --popover: 240 22% 15%;
+    --popover-foreground: 226 64% 86%;
+
+    --primary: 267 86% 81%; /* #cba6f7 approx */
+    --primary-foreground: 240 22% 15%;
+
+    --secondary: 234 18% 23%; /* #313244 approx */
+    --secondary-foreground: 226 64% 86%;
+
+    --muted: 229 12% 47%; /* #6c7086 approx */
+    --muted-foreground: 229 12% 62%;
+
+    --accent: 232 13% 31%; /* #45475a approx */
+    --accent-foreground: 226 64% 86%;
+
+    --destructive: 347 88% 76%; /* #f38ba8 approx */
+    --destructive-foreground: 240 22% 15%;
+
+    --border: 234 18% 23%;
+    --input: 234 18% 23%;
+    --ring: 267 86% 81%;
+  }
+
+  * { @apply border-border; }
+  body { @apply bg-background text-foreground antialiased; }
 }

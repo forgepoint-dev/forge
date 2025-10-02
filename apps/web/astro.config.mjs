@@ -3,6 +3,7 @@ import { defineConfig } from "astro/config";
 import vue from "@astrojs/vue";
 import tailwind from "@astrojs/tailwind";
 import { createSlotRegistry, createSlotPlugin } from "./src/lib/slot-plugin.ts";
+import node from "@astrojs/node";
 // Import issues integration from workspace (for local development)
 // In production, use: import issuesIntegration from '@forgepoint/astro-integration-issues';
 import issuesIntegration from "../../extensions/issues/ui/src/index.ts";
@@ -23,6 +24,16 @@ export default defineConfig({
 		// Enable Issues extension with slot registration
 		issuesIntegration({ slotRegistry }),
 	],
+	// Enable full SSR; server islands work with the Node adapter
+	output: "server",
+	adapter: node({ mode: "standalone" }),
+	// Ensure dev server is reachable on 127.0.0.1 for cookie-domain alignment
+	server: {
+		host: true,
+	},
+	preview: {
+		host: true,
+	},
 	vite: {
 		plugins: [slotPlugin],
 	},

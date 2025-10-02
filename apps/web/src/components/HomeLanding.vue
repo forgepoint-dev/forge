@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import UiInput from './ui/input.vue'
 import UiButton from './ui/button.vue'
+import ThemeSwitcher from './ThemeSwitcher.vue'
 import CreateRepositoryModal from './CreateRepositoryModal.vue'
 import LinkRepositoryModal from './LinkRepositoryModal.vue'
 import { graphqlRequest } from '../lib/graphql'
@@ -32,6 +33,7 @@ const error = ref<string | null>(null)
 
 const showCreateDialog = ref(false)
 const showLinkDialog = ref(false)
+const authenticated = ref(false)
 
 const hasRepos = computed(() => repos.value.length > 0)
 
@@ -106,6 +108,18 @@ async function loadData() {
   }
 }
 
+async function loadAuth() {
+  try {
+    const res = await fetch('/api/auth/me', { credentials: 'include' })
+    if (res.ok) {
+      const data = await res.json().catch(() => ({ authenticated: false }))
+      authenticated.value = Boolean(data?.authenticated)
+    }
+  } catch {
+    authenticated.value = false
+  }
+}
+
 async function createRepository(data: { slug: string; groupId?: string }) {
   try {
     const mutation = /* GraphQL */ `
@@ -160,43 +174,45 @@ async function linkRepository(data: { url: string }) {
 }
 
 onMounted(async () => {
-  await loadData()
+  await Promise.all([loadAuth(), loadData()])
 })
+const authLoginUrl = (() => {
+  const env = import.meta.env as Record<string, string | undefined>
+  const override = env.PUBLIC_FORGE_AUTH_LOGIN_URL
+  if (override) {
+    return override
+  }
+
+  const graphqlEndpoint = env.PUBLIC_FORGE_GRAPHQL_URL ?? 'http://localhost:8000/graphql'
+  const base = graphqlEndpoint.replace(/\/graphql$/, '')
+  const sanitizedBase = base.endsWith('/') ? base.slice(0, -1) : base
+  return `${sanitizedBase}/auth/login`
+})()
+
 </script>
 
 <template>
   <div class="min-h-screen flex flex-col">
-    <!-- Header -->
-    <header class="sticky top-0 z-30 border-b bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-        <div class="flex items-center gap-3">
-          <div class="size-8 rounded bg-primary/10 text-primary grid place-items-center font-black">
-            F
-          </div>
-          <span class="font-semibold">Forge</span>
-        </div>
-        <div class="hidden md:flex items-center gap-2 flex-1 max-w-xl mx-6">
-          <div class="relative w-full">
-            <UiInput type="search" placeholder="Search or jump to..." />
-            <kbd class="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground border rounded px-1.5 py-0.5">/
-            </kbd>
-          </div>
-        </div>
-        <div class="w-12" />
-      </div>
-    </header>
+    <!-- Header moved to server island in layout -->
     <!-- Repositories -->
     <section id="repos" class="">
       <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-16">
         <div class="flex items-center justify-between mb-6">
           <h2 class="text-2xl font-semibold">Repositories</h2>
           <div class="flex gap-2">
-            <UiButton @click="showCreateDialog = true">
-              Create Repository
-            </UiButton>
-            <UiButton variant="outline" @click="showLinkDialog = true">
-              Link Repository
-            </UiButton>
+            <template v-if="authenticated">
+              <UiButton @click="showCreateDialog = true">
+                Create Repository
+              </UiButton>
+              <UiButton variant="outline" @click="showLinkDialog = true">
+                Link Repository
+              </UiButton>
+            </template>
+            <template v-else>
+              <a :href="`${authLoginUrl}?return_to=${encodeURIComponent(location.href)}`" class="inline-flex items-center justify-center gap-2 h-9 px-4 rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90">
+                Register / Login
+              </a>
+            </template>
           </div>
         </div>
         <div class="grid gap-3">

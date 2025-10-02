@@ -106,9 +106,9 @@ describe('IssueList.vue', () => {
 		await wrapper.vm.$nextTick();
 		await new Promise((resolve) => setTimeout(resolve, 0));
 
-		const link = wrapper.find('a[href="/issues/issue_1"]');
-		expect(link.exists()).toBe(true);
-		expect(link.text()).toContain('Test Issue');
+    const link = wrapper.find('a[href="/issues/issue_1?repositoryId=repo-1"]');
+    expect(link.exists()).toBe(true);
+    expect(link.text()).toContain('Test Issue');
 	});
 
 	it('displays issue status', async () => {
@@ -156,10 +156,11 @@ describe('IssueList.vue', () => {
 	});
 
 	it('prompts for repository when none provided', async () => {
-		const wrapper = mount(IssueList);
+    const wrapper = mount(IssueList);
+    await wrapper.vm.$nextTick();
+    // allow onMounted(loadIssues) to complete and loading to settle
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
-		await wrapper.vm.$nextTick();
-
-		expect(wrapper.text()).toContain('Select a repository to view issues');
-	});
+    expect(wrapper.text()).toContain('Select a repository to view issues');
+  });
 });

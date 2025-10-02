@@ -19,11 +19,12 @@ describe('issuesIntegration', () => {
 		it('does not register slot when slotRegistry not provided', () => {
 			const integration = issuesIntegration();
 			const injectRoute = vi.fn();
-			const slotRegistry = {
-				repoTabs: [],
-				groupTabs: [],
-				homepageWidgets: [],
-			};
+            const slotRegistry = {
+                repoTabs: [],
+                groupTabs: [],
+                homepageWidgets: [],
+                actions: [],
+            };
 
 			integration.hooks?.['astro:config:setup']?.({
 				injectRoute,
@@ -42,11 +43,12 @@ describe('issuesIntegration', () => {
 		});
 
 		it('registers repo tab slot when slotRegistry provided', () => {
-			const slotRegistry = {
-				repoTabs: [],
-				groupTabs: [],
-				homepageWidgets: [],
-			};
+            const slotRegistry = {
+                repoTabs: [],
+                groupTabs: [],
+                homepageWidgets: [],
+                actions: [],
+            };
 			const integration = issuesIntegration({ slotRegistry });
 			const injectRoute = vi.fn();
 
@@ -72,11 +74,12 @@ describe('issuesIntegration', () => {
 		});
 
 		it('registers slot with correct order', () => {
-			const slotRegistry = {
-				repoTabs: [],
-				groupTabs: [],
-				homepageWidgets: [],
-			};
+            const slotRegistry = {
+                repoTabs: [],
+                groupTabs: [],
+                homepageWidgets: [],
+                actions: [],
+            };
 			const integration = issuesIntegration({ slotRegistry });
 			const injectRoute = vi.fn();
 
@@ -97,11 +100,12 @@ describe('issuesIntegration', () => {
 		});
 
 		it('does not register group tabs or homepage widgets', () => {
-			const slotRegistry = {
-				repoTabs: [],
-				groupTabs: [],
-				homepageWidgets: [],
-			};
+            const slotRegistry = {
+                repoTabs: [],
+                groupTabs: [],
+                homepageWidgets: [],
+                actions: [],
+            };
 			const integration = issuesIntegration({ slotRegistry });
 			const injectRoute = vi.fn();
 
@@ -172,7 +176,7 @@ describe('issuesIntegration', () => {
 			);
 		});
 
-		it('injects routes even when slotRegistry not provided', () => {
+        it('injects routes even when slotRegistry not provided', () => {
 			const integration = issuesIntegration();
 			const injectRoute = vi.fn();
 
@@ -189,8 +193,9 @@ describe('issuesIntegration', () => {
 				injectScript: vi.fn(),
 			});
 
-			expect(injectRoute).toHaveBeenCalledTimes(2);
-		});
+            // Six routes are injected by the integration
+            expect(injectRoute).toHaveBeenCalledTimes(6);
+        });
 	});
 
 	describe('integration options', () => {
