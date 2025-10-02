@@ -15,3 +15,4 @@
 
 .gemini/
 gha-creds-*.json
+package-lock.json

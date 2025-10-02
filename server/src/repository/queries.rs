@@ -14,6 +14,7 @@ use super::models::{
     RepositorySummary, RepositorySummaryRow,
 };
 use super::storage::RepositoryStorage;
+use crate::group::queries::get_group_parent;
 use crate::validation::slug::validate_slug;
 
 pub async fn get_all_repositories_raw(pool: &SqlitePool) -> anyhow::Result<Vec<RepositoryRecord>> {
@@ -298,4 +299,87 @@ pub async fn get_repositories_for_group(
     .await?;
 
     Ok(rows.into_iter().map(RepositorySummary::from).collect())
+}
+
+/// Reconstructs the full repository path from a repository record
+async fn reconstruct_repository_path(
+    pool: &SqlitePool,
+    record: &RepositoryRecord,
+) -> anyhow::Result<String> {
+    if let Some(group_id) = &record.group_id {
+        // Recursively build group path
+        let mut path_segments = vec![record.slug.clone()];
+        let mut current_group_id = group_id.clone();
+
+        loop {
+            if let Some(group) = get_group_parent(pool, &current_group_id).await? {
+                path_segments.insert(0, group.slug.clone());
+                if let Some(parent_id) = group.parent {
+                    current_group_id = parent_id;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        Ok(path_segments.join("/"))
+    } else {
+        Ok(record.slug.clone())
+    }
+}
+
+/// Gets the README HTML for a repository at the root path
+pub async fn get_repository_readme_html(
+    pool: &SqlitePool,
+    storage: &RepositoryStorage,
+    record: &RepositoryRecord,
+    branch: Option<String>,
+) -> anyhow::Result<Option<String>> {
+    // Reconstruct full path
+    let path = reconstruct_repository_path(pool, record).await?;
+
+    let segments: Vec<String> = path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| segment.to_string())
+        .collect();
+
+    if segments.is_empty() {
+        return Ok(None);
+    }
+
+    // Get repository entries at root
+    let repository_path = if record.remote_url.is_some() {
+        storage.ensure_remote_repository(record).await?
+    } else {
+        storage.ensure_local_repository(&segments)?
+    };
+
+    let entries = read_repository_entries(repository_path.clone(), String::new(), branch.clone()).await?;
+
+    // Detect README file
+    let readme_path = super::readme::detect_readme_file(&entries);
+    let Some(readme_path) = readme_path else {
+        return Ok(None);
+    };
+
+    // Read README content
+    let file = read_repository_file_for_branch(
+        repository_path,
+        readme_path.clone(),
+        branch.clone(),
+    )
+    .await?;
+
+    // Skip binary files or empty content
+    if file.is_binary || file.text.is_none() {
+        return Ok(None);
+    }
+
+    let content = file.text.unwrap();
+    let html = super::readme::render_readme(&content, &readme_path);
+
+    Ok(Some(html))
 }

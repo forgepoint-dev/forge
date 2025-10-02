@@ -153,6 +153,7 @@ type RepositoryNode @join__type(graph: CORE) {
   group: GroupSummary @join__field(graph: CORE)
   isRemote: Boolean! @join__field(graph: CORE)
   remoteUrl: String @join__field(graph: CORE)
+  readmeHtml(branch: String): String @join__field(graph: CORE)
 }
 
 type RepositorySummary @join__type(graph: CORE) {

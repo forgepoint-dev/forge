@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use wasmtime::component::*;
 use wasmtime::{Config, Engine, Store};
-use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime_wasi::p2::{add_to_linker_sync, IoView, WasiCtx, WasiCtxBuilder, WasiView};
 
 // Generate the host-side WIT bindings
 // Note: Using sync (not async) to avoid Send+Sync issues with WASI types in Store
@@ -203,14 +203,16 @@ impl ExtensionState {
     }
 }
 
-// Implement WasiView so Wasmtime can access WASI context
+// Expose WASI internals to Wasmtime runtime
+impl IoView for ExtensionState {
+    fn table(&mut self) -> &mut ResourceTable {
+        &mut self.table
+    }
+}
+
 impl WasiView for ExtensionState {
     fn ctx(&mut self) -> &mut WasiCtx {
         &mut self.wasi
-    }
-
-    fn table(&mut self) -> &mut ResourceTable {
-        &mut self.table
     }
 }
 
@@ -512,7 +514,7 @@ impl ComponentExtension {
 
         // Create linker and add WASI
         let mut linker = Linker::new(&engine);
-        wasmtime_wasi::add_to_linker_sync(&mut linker)?;
+        add_to_linker_sync(&mut linker)?;
 
         // Add host interfaces using generated bindings
         WasmExtension::add_to_linker(&mut linker, |state: &mut ExtensionState| state)?;

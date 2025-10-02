@@ -11,6 +11,7 @@ use tower_http::cors::{Any, CorsLayer};
 
 use super::playground::graphql_playground;
 use crate::router::{GraphQLExecutionRequest, RouterState};
+use std::io;
 
 /// GraphQL request structure
 #[derive(Debug, Deserialize)]
@@ -55,7 +56,34 @@ pub fn build_api_router(router_state: Arc<RouterState>) -> Router {
 }
 
 pub async fn run_api(router_state: Arc<RouterState>, shutdown: CancellationToken) -> Result<()> {
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await?;
+    let default_addr = "0.0.0.0:8000".to_string();
+
+    let configured_addr = std::env::var("FORGE_API_ADDR")
+        .or_else(|_| {
+            std::env::var("FORGE_API_PORT")
+                .map(|port| format!("0.0.0.0:{}", port))
+        })
+        .or_else(|_| {
+            std::env::var("PORT").map(|port| format!("0.0.0.0:{}", port))
+        })
+        .unwrap_or(default_addr);
+
+    let listener = match tokio::net::TcpListener::bind(&configured_addr).await {
+        Ok(listener) => listener,
+        Err(err) if err.kind() == io::ErrorKind::AddrInUse => {
+            tracing::warn!(
+                "Address {} already in use, falling back to an ephemeral port",
+                configured_addr
+            );
+            tokio::net::TcpListener::bind("0.0.0.0:0").await?
+        }
+        Err(err) => return Err(err.into()),
+    };
+
+    if let Ok(addr) = listener.local_addr() {
+        tracing::info!("Forge API listening on {}", addr);
+    }
+
     axum::serve(listener, build_api_router(router_state))
         .with_graceful_shutdown(shutdown.cancelled_owned())
         .await?;

@@ -129,6 +129,7 @@ type RepositoryDetails = {
   group: { id: string; slug: string } | null
   isRemote: boolean
   remoteUrl?: string | null
+  readmeHtml?: string | null
 }
 
 type GroupDetails = {
@@ -293,22 +294,35 @@ async function loadData(path: string) {
   activeBranchReference = null
 
   try {
-    const repoResponse = await graphqlRequest<{ getRepository: RepositoryDetails | null }>({
-      query: /* GraphQL */ `
-        query RepositoryByPath($path: String!) {
-          getRepository(path: $path) {
-            id
-            slug
-            isRemote
-            remoteUrl
-            group {
-              id
-              slug
-            }
-          }
+    const hasBranch = !!branch.value
+    const queryWithBranch = /* GraphQL */ `
+      query RepositoryByPath($path: String!, $branch: String) {
+        getRepository(path: $path) {
+          id
+          slug
+          isRemote
+          remoteUrl
+          readmeHtml(branch: $branch)
+          group { id slug }
         }
-      `,
-      variables: { path },
+      }
+    `
+    const queryWithoutBranch = /* GraphQL */ `
+      query RepositoryByPathNoBranch($path: String!) {
+        getRepository(path: $path) {
+          id
+          slug
+          isRemote
+          remoteUrl
+          readmeHtml
+          group { id slug }
+        }
+      }
+    `
+
+    const repoResponse = await graphqlRequest<{ getRepository: RepositoryDetails | null }>({
+      query: hasBranch ? queryWithBranch : queryWithoutBranch,
+      variables: hasBranch ? { path, branch: branch.value } : { path },
     })
 
     if (!repoResponse.getRepository) {
@@ -500,6 +514,7 @@ async function loadRepositoryEntries(path: string, tree: string) {
   }
 }
 
+
 async function openFile(path: string) {
   if (!repository.value) return
   if (selectedFilePath.value === path && fileContent.value && !fileError.value) {
@@ -576,7 +591,7 @@ watch(
 
 watch(
   branch,
-  (next, prev) => {
+  async (next, prev) => {
     if (!branchInitialized || next === prev) {
       return
     }
@@ -594,6 +609,32 @@ watch(
     fileError.value = null
     fileLoading.value = false
     filePreviewHtml.value = null
+
+    // Refetch README for new branch (or default when cleared)
+    try {
+      const hasBranch = !!next
+      const queryWithBranch = /* GraphQL */ `
+        query RepositoryReadmeForBranch($path: String!, $branch: String) {
+          getRepository(path: $path) { id readmeHtml(branch: $branch) }
+        }
+      `
+      const queryWithoutBranch = /* GraphQL */ `
+        query RepositoryReadmeForBranchNoBranch($path: String!) {
+          getRepository(path: $path) { id readmeHtml }
+        }
+      `
+
+      const repoResponse = await graphqlRequest<{ getRepository: RepositoryDetails | null }>({
+        query: hasBranch ? queryWithBranch : queryWithoutBranch,
+        variables: hasBranch ? { path: props.fullPath, branch: next } : { path: props.fullPath },
+      })
+
+      if (repoResponse.getRepository && repository.value) {
+        repository.value.readmeHtml = repoResponse.getRepository.readmeHtml
+      }
+    } catch (err) {
+      console.error('Failed to load README for branch:', err)
+    }
 
     const resetPath = ''
     if (treePath.value !== resetPath) {
@@ -712,6 +753,22 @@ function formatSize(size: number | null | undefined) {
         </div>
 
         <ExtensionTabs v-if="repositoryContext" :repository="repositoryContext">
+          <template #readme>
+            <section v-if="repository?.readmeHtml && resolvedTreePath === ''" class="rounded-lg border bg-card">
+              <div class="border-b px-5 py-4">
+                <h3 class="text-sm font-semibold text-muted-foreground flex items-center gap-2">
+                  <span>README</span>
+                </h3>
+              </div>
+              <div class="prose prose-sm dark:prose-invert max-w-none p-5">
+                <div v-html="repository.readmeHtml"></div>
+              </div>
+            </section>
+            <section v-else class="rounded-lg border bg-card p-5 text-sm text-muted-foreground">
+              <span v-if="resolvedTreePath !== ''">README only shown at repository root.</span>
+              <span v-else>No README available.</span>
+            </section>
+          </template>
           <template #files>
             <section class="rounded-lg border bg-card">
           <div class="flex flex-col gap-2 border-b px-5 py-4 sm:flex-row sm:items-center sm:justify-between">

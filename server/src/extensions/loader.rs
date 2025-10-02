@@ -4,7 +4,8 @@ use anyhow::{Context, Result};
 use std::path::Path;
 use std::time::Duration;
 use wasmtime::*;
-use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
+use wasmtime_wasi::p2::WasiCtxBuilder;
+use wasmtime_wasi::{DirPerms, FilePerms};
 
 use super::interface::ExtensionInstance;
 
@@ -201,6 +202,10 @@ fn validate_module_imports(module: &Module) -> Result<()> {
             }
             ExternType::Memory(_) | ExternType::Table(_) | ExternType::Global(_) => {
                 // These are generally safe
+                continue;
+            }
+            ExternType::Tag(_) => {
+                // Tags correspond to exception handling constructs; accept them.
                 continue;
             }
         }
