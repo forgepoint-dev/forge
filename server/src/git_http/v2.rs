@@ -386,6 +386,8 @@ impl FetchRequest {
     pub fn filter_requested(&self) -> bool { self.filter.is_some() }
     pub fn haves(&self) -> &[String] { &self.haves }
     pub fn no_progress(&self) -> bool { self.no_progress }
+    pub fn thin_pack(&self) -> bool { self.thin_pack }
+    pub fn ofs_delta(&self) -> bool { self.ofs_delta }
     pub fn want_refs(&self) -> &[String] { &self.want_refs }
     pub fn client_shallows(&self) -> &[String] { &self.client_shallows }
     pub fn deepen(&self) -> Option<u32> { self.deepen }

@@ -230,7 +230,88 @@ fn build_and_stream_pack(
         Ok(())
     };
 
-    for id in &commits { write_obj(*id)?; }
+    // Build a quick lookup for client haves (used to enable thin-pack commit deltas)
+    let mut have_set: HashSet<gix::hash::ObjectId> = HashSet::new();
+    for h in req.haves() {
+        if let Ok(oid) = gix::hash::ObjectId::from_hex(h.as_bytes()) { have_set.insert(oid); }
+    }
+
+    // Minimal delta encoder: emit a REF_DELTA for commits when thin-pack is negotiated
+    // and a suitable base commit exists in client haves. The delta encodes the full
+    // result via insert ops only. This yields a valid thin-pack the client can fix.
+    let mut encode_varint = |mut n: u64| -> Vec<u8> {
+        let mut v = Vec::new();
+        loop {
+            let mut byte = (n & 0x7f) as u8;
+            n >>= 7;
+            if n != 0 { byte |= 0x80; }
+            v.push(byte);
+            if n == 0 { break; }
+        }
+        v
+    };
+
+    let mut write_ref_delta_commit = |target_oid: gix::hash::ObjectId, base_oid: gix::hash::ObjectId| -> anyhow::Result<()> {
+        let base_obj = repo.find_object(base_oid)?;
+        if base_obj.kind != gix::objs::Kind::Commit { anyhow::bail!("delta base is not a commit"); }
+        let base_size = base_obj.data.len() as u64;
+
+        let targ_obj = repo.find_object(target_oid)?;
+        if targ_obj.kind != gix::objs::Kind::Commit { anyhow::bail!("target is not a commit"); }
+        let data = targ_obj.data.to_vec();
+
+        // Build a delta that inserts the entire target content.
+        let mut delta = Vec::with_capacity(16 + data.len() + (data.len() / 127) + 8);
+        delta.extend_from_slice(&encode_varint(base_size));
+        delta.extend_from_slice(&encode_varint(data.len() as u64));
+        let mut i = 0;
+        while i < data.len() {
+            let take = (data.len() - i).min(127);
+            delta.push(take as u8); // insert op (high bit 0) with length
+            delta.extend_from_slice(&data[i..i + take]);
+            i += take;
+        }
+
+        // Header: REF_DELTA (type=7) with target size
+        let mut hdr = encode_obj_header(7u8, data.len() as u64);
+        hasher.update(&hdr);
+        out.send_chunk(&hdr)?;
+
+        // 20-byte base object id
+        let base_raw = base_oid.as_bytes();
+        hasher.update(base_raw);
+        out.send_chunk(base_raw)?;
+
+        // Compress delta payload
+        let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(&delta)?;
+        let compressed = encoder.finish()?;
+        hasher.update(&compressed);
+        out.send_chunk(&compressed)?;
+        Ok(())
+    };
+
+    // Write commits: prefer thin-pack ref-delta against a have'd parent when possible
+    for id in &commits {
+        let mut wrote = false;
+        if req.thin_pack() {
+            // Choose a base: prefer direct parent that exists in client haves
+            if let Ok(obj) = repo.find_object(*id) {
+                if obj.kind == gix::objs::Kind::Commit {
+                    if let Ok((_, parents)) = parse_commit_raw(obj.data.as_ref()) {
+                        if let Some(base) = parents.into_iter().find(|p| have_set.contains(p)) {
+                            if let Err(e) = write_ref_delta_commit((*id).into(), base) {
+                                tracing::debug!("ref-delta emit failed for {}: {}", id, e);
+                            } else {
+                                wrote = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if !wrote { write_obj(*id)?; }
+    }
     for id in &seen_tree { write_obj((*id).into())?; }
     for id in &blobs { write_obj((*id).into())?; }
 

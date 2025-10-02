@@ -40,7 +40,7 @@ touch "$REPOS_DIR/$REPO_NAME.git/git-daemon-export-ok"
 
 TMP=$(mktemp -d)
 git -C "$TMP" init >/dev/null
-echo 1 > "$TMP/file"; git -C "$TMP" add file; git -C "$TMP" -c user.email=t@e -c user.name=t commit -m c1 >/dev/null
+echo 1 > "$TMP/file"; git -C "$TMP" add file; git -C "$TMP" -c user.email=t@e -c user.name=t -c commit.gpgsign=false commit -m c1 >/dev/null
 git -C "$TMP" branch -M main >/dev/null
 git -C "$TMP" remote add origin "$REPOS_DIR/$REPO_NAME.git"
 git -C "$TMP" push origin main >/dev/null
@@ -52,7 +52,7 @@ fi
 echo "clone ok"
 
 # Add another commit and fetch
-echo 2 >> "$TMP/file"; git -C "$TMP" commit -am c2 >/dev/null
+echo 2 >> "$TMP/file"; git -C "$TMP" -c commit.gpgsign=false commit -am c2 >/dev/null
 git -C "$TMP" push origin main >/dev/null
 if ! git -C "$DEST/repo" -c protocol.version=2 fetch origin >/tmp/git-fetch.out 2>/tmp/git-fetch.err; then
   echo "fetch failed"; cat /tmp/git-fetch.err; exit 1;
