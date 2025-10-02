@@ -1,3 +1,4 @@
+pub mod auth_handlers;
 pub mod playground;
 pub mod server;
 

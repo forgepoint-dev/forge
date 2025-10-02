@@ -1,4 +1,5 @@
 mod api;
+mod auth;
 mod config;
 mod db;
 mod extensions;
@@ -14,7 +15,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use supervisor::Supervisor;
 
+use api::auth_handlers::AuthState;
 use api::run_api;
+use auth::{AtProtoAuthClient, AuthConfig, SessionManager};
 use repository::RepositoryStorage;
 use router::RouterState;
 
@@ -96,11 +99,40 @@ async fn main() -> anyhow::Result<()> {
             .context("Failed to initialise router state")?,
     );
 
+    // Initialize authentication if configured
+    let auth_state = initialize_auth();
+
     let mut supervisor = Supervisor::new();
 
     supervisor.spawn("api", move |shutdown| async move {
-        run_api(router_state, shutdown).await
+        run_api(router_state, auth_state, shutdown).await
     });
 
     supervisor.run().await
+}
+
+/// Initialize authentication if environment variables are configured
+fn initialize_auth() -> Option<Arc<AuthState>> {
+    let client_id = std::env::var("ATPROTO_CLIENT_ID").ok()?;
+    let client_secret = std::env::var("ATPROTO_CLIENT_SECRET").ok()?;
+    let redirect_uri = std::env::var("ATPROTO_REDIRECT_URI")
+        .unwrap_or_else(|_| "http://localhost:8000/auth/callback".to_string());
+
+    tracing::info!("Initializing ATProto authentication");
+
+    let config = AuthConfig::bluesky_default(client_id, client_secret, redirect_uri);
+
+    match AtProtoAuthClient::new(config) {
+        Ok(oauth_client) => {
+            let session_manager = SessionManager::new();
+            Some(Arc::new(AuthState {
+                oauth_client,
+                session_manager,
+            }))
+        }
+        Err(e) => {
+            tracing::error!("Failed to initialize OAuth client: {}", e);
+            None
+        }
+    }
 }
