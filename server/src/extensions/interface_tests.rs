@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::task::JoinSet;
 use wasmtime::Engine;
-use wasmtime_wasi::WasiCtxBuilder;
+use wasmtime_wasi::p2::WasiCtxBuilder;
 
 #[test]
 fn test_concurrent_ops_guard_decrements_on_drop() {
@@ -48,7 +48,7 @@ fn test_concurrent_ops_guard_multiple_drops() {
 async fn test_concurrent_operation_limit_enforced() {
     use wasmtime::Engine;
     use wasmtime::Store;
-    use wasmtime_wasi::WasiCtxBuilder;
+    use wasmtime_wasi::p2::WasiCtxBuilder;
 
     // Create a minimal extension instance for testing
     let limits = ExtensionLimits {

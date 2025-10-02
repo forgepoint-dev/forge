@@ -197,11 +197,19 @@ impl GraphQLExecutionRequest {
             JsonValue::Object(map) => {
                 let mut out = HashMap::with_capacity(map.len());
                 for (k, v) in map {
+                    if v.is_null() {
+                        // Skip null variables to avoid passing them as explicit values when the schema expects optional inputs.
+                        continue;
+                    }
                     let sonic = sonic_rs::to_value(v)
                         .map_err(|e| anyhow!("Invalid variable value for {k}: {e}"))?;
                     out.insert(k.clone(), sonic);
                 }
-                Some(out)
+                if out.is_empty() {
+                    None
+                } else {
+                    Some(out)
+                }
             }
             _ => {
                 return Err(anyhow!("variables payload must be an object or null"));

@@ -21,7 +21,7 @@ cuid2 = "0.1"
 tower-http = { version = "0.5", features = ["cors"] }
 url = "2"
 gix = { version = "0.73.0", features = ["blocking-http-transport-reqwest-rust-tls"] }
-wasmtime = { version = "26", features = ["component-model"] }
+wasmtime = { version = "33", features = ["component-model"] }
 wasmtime-wasi = "33"
 cap-std = "3"
 wit-bindgen = { version = "0.32", default-features = false, features = ["macros"] }

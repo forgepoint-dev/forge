@@ -9,9 +9,11 @@ const props = defineProps<{
 
 const componentError = ref<string | null>(null);
 
-const activeTab = ref<string>('files');
+// Default tab is README when available; parent component decides whether to provide slot content.
+const activeTab = ref<string>('readme');
 
 const tabs = computed(() => [
+	{ id: 'readme', label: 'README' },
 	{ id: 'files', label: 'Files' },
 	...repoTabs.map((slot) => ({ id: slot.id, label: slot.label })),
 ]);
@@ -56,6 +58,10 @@ onErrorCaptured((err) => {
 			>
 				Return to Files tab
 			</button>
+		</div>
+
+		<div v-else-if="activeTab === 'readme'">
+			<slot name="readme" />
 		</div>
 
 		<div v-else-if="activeTab === 'files'">

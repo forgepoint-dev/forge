@@ -369,7 +369,7 @@ pub async fn get_repository_readme_html(
     let file = read_repository_file_for_branch(
         repository_path,
         readme_path.clone(),
-        branch.as_deref(),
+        branch.clone(),
     )
     .await?;
 
@@ -383,4 +383,3 @@ pub async fn get_repository_readme_html(
 
     Ok(Some(html))
 }
-
