@@ -1,9 +1,10 @@
-//! Authentication HTTP handlers for OAuth flow
+//! Authentication HTTP handlers for ATProto OAuth flow
 
 use axum::{
     extract::{Query, State},
     http::StatusCode,
     response::{Html, IntoResponse},
+    Form,
 };
 use serde::Deserialize;
 use std::sync::Arc;
@@ -23,18 +24,116 @@ pub struct OAuthCallback {
     pub state: String,
 }
 
-/// Handler for initiating OAuth login
+/// Login form parameters
+#[derive(Debug, Deserialize)]
+pub struct LoginForm {
+    pub handle: String,
+}
+
+/// Logout query parameters
+#[derive(Debug, Deserialize)]
+pub struct LogoutQuery {
+    pub session_id: Option<String>,
+}
+
+/// Handler for displaying the login form
 ///
-/// This generates an authorization URL and redirects the user to the OAuth provider
-pub async fn login_handler(State(auth_state): State<Arc<AuthState>>) -> impl IntoResponse {
-    match auth_state.oauth_client.get_authorization_url() {
-        Ok((auth_url, _csrf_token)) => {
-            // In production, you'd store csrf_token in a secure cookie and verify it in callback
+/// This displays a form where users enter their ATProto handle
+pub async fn login_handler(State(_auth_state): State<Arc<AuthState>>) -> impl IntoResponse {
+    let html = r#"<!DOCTYPE html>
+<html>
+<head>
+    <title>Login with ATProto</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f5f5f5;
+        }
+        .container {
+            text-align: center;
+            background: white;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            max-width: 400px;
+            width: 100%;
+        }
+        .form-group {
+            margin: 20px 0;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+            box-sizing: border-box;
+        }
+        button {
+            width: 100%;
+            padding: 12px 24px;
+            background-color: #0085ff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-weight: 500;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0070dd;
+        }
+        .help-text {
+            font-size: 14px;
+            color: #666;
+            margin-top: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Login to Forge</h1>
+        <p>Enter your ATProto handle to authenticate</p>
+        <form action="/auth/authorize" method="post">
+            <div class="form-group">
+                <input 
+                    type="text" 
+                    name="handle" 
+                    placeholder="your-handle.bsky.social"
+                    required
+                    autofocus
+                />
+                <p class="help-text">Enter your Bluesky handle (e.g., alice.bsky.social)</p>
+            </div>
+            <button type="submit">Continue</button>
+        </form>
+    </div>
+</body>
+</html>"#;
+    Html(html).into_response()
+}
+
+/// Handler for initiating OAuth authorization
+///
+/// This resolves the handle and redirects to the authorization server
+pub async fn authorize_handler(
+    State(auth_state): State<Arc<AuthState>>,
+    Form(form): Form<LoginForm>,
+) -> impl IntoResponse {
+    match auth_state.oauth_client.get_authorization_url(form.handle).await {
+        Ok((auth_url, _state)) => {
+            // In production, store state in a secure cookie and verify in callback
             let html = format!(
                 r#"<!DOCTYPE html>
 <html>
 <head>
-    <title>Login with ATProto</title>
+    <title>Redirecting...</title>
+    <meta http-equiv="refresh" content="0;url={}">
     <style>
         body {{
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -52,29 +151,16 @@ pub async fn login_handler(State(auth_state): State<Arc<AuthState>>) -> impl Int
             border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }}
-        .button {{
-            display: inline-block;
-            padding: 12px 24px;
-            background-color: #0085ff;
-            color: white;
-            text-decoration: none;
-            border-radius: 4px;
-            font-weight: 500;
-        }}
-        .button:hover {{
-            background-color: #0070dd;
-        }}
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Login to Forge</h1>
-        <p>Click the button below to authenticate with your ATProto account.</p>
-        <a href="{}" class="button">Login with ATProto</a>
+        <h1>Redirecting to ATProto...</h1>
+        <p>If you are not redirected automatically, <a href="{}">click here</a>.</p>
     </div>
 </body>
 </html>"#,
-                auth_url
+                auth_url, auth_url
             );
             Html(html).into_response()
         }
@@ -92,10 +178,14 @@ pub async fn callback_handler(
     State(auth_state): State<Arc<AuthState>>,
     Query(params): Query<OAuthCallback>,
 ) -> impl IntoResponse {
+    // For now, we'll use bsky.social as the PDS URL
+    // In a full implementation, this would be stored in session state
+    let pds_url = "https://bsky.social".to_string();
+
     // Exchange authorization code for access token
     let (access_token, refresh_token) = match auth_state
         .oauth_client
-        .exchange_code(params.code)
+        .exchange_code(params.code, pds_url.clone())
         .await
     {
         Ok(tokens) => tokens,
@@ -109,7 +199,7 @@ pub async fn callback_handler(
     };
 
     // Fetch user profile
-    let user = match auth_state.oauth_client.get_user_profile(&access_token).await {
+    let user = match auth_state.oauth_client.get_user_profile(&access_token, &pds_url).await {
         Ok(user) => user,
         Err(err) => {
             tracing::error!("Failed to fetch user profile: {}", err);
@@ -187,12 +277,6 @@ pub async fn callback_handler(
     Html(html).into_response()
 }
 
-/// Logout query parameters
-#[derive(Debug, Deserialize)]
-pub struct LogoutQuery {
-    pub session_id: Option<String>,
-}
-
 /// Handler for logout
 /// 
 /// Note: In production, session ID should be stored in a secure HTTP-only cookie
@@ -201,7 +285,7 @@ pub struct LogoutQuery {
 pub async fn logout_handler(
     State(auth_state): State<Arc<AuthState>>,
     Query(params): Query<LogoutQuery>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
     let result = if let Some(session_id) = params.session_id {
         // Delete specific session
         auth_state.session_manager.delete_session(&session_id)
@@ -280,3 +364,4 @@ pub async fn logout_handler(
         }
     }
 }
+

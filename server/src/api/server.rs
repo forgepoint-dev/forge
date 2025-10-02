@@ -60,6 +60,7 @@ pub fn build_api_router(app_state: AppState) -> Router {
     if app_state.auth.is_some() {
         router = router
             .route("/auth/login", get(auth_login_handler))
+            .route("/auth/authorize", post(auth_authorize_handler))
             .route("/auth/callback", get(auth_callback_handler))
             .route("/auth/logout", get(auth_logout_handler));
     }
@@ -79,6 +80,17 @@ pub fn build_api_router(app_state: AppState) -> Router {
 async fn auth_login_handler(State(app_state): State<AppState>) -> axum::response::Response {
     if let Some(auth_state) = app_state.auth {
         auth_handlers::login_handler(State(auth_state)).await.into_response()
+    } else {
+        (StatusCode::NOT_FOUND, "Authentication not configured").into_response()
+    }
+}
+
+async fn auth_authorize_handler(
+    State(app_state): State<AppState>,
+    form: axum::Form<auth_handlers::LoginForm>,
+) -> axum::response::Response {
+    if let Some(auth_state) = app_state.auth {
+        auth_handlers::authorize_handler(State(auth_state), form).await.into_response()
     } else {
         (StatusCode::NOT_FOUND, "Authentication not configured").into_response()
     }

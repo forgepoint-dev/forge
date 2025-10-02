@@ -118,9 +118,13 @@ fn initialize_auth() -> Option<Arc<AuthState>> {
     let redirect_uri = std::env::var("ATPROTO_REDIRECT_URI")
         .unwrap_or_else(|_| "http://localhost:8000/auth/callback".to_string());
 
-    tracing::info!("Initializing ATProto authentication");
+    tracing::info!("Initializing ATProto OAuth authentication");
 
-    let config = AuthConfig::bluesky_default(client_id, client_secret, redirect_uri);
+    let config = AuthConfig {
+        client_id,
+        client_secret,
+        redirect_uri,
+    };
 
     match AtProtoAuthClient::new(config) {
         Ok(oauth_client) => {
@@ -131,7 +135,7 @@ fn initialize_auth() -> Option<Arc<AuthState>> {
             }))
         }
         Err(e) => {
-            tracing::error!("Failed to initialize OAuth client: {}", e);
+            tracing::error!("Failed to initialize ATProto OAuth client: {}", e);
             None
         }
     }

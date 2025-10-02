@@ -42,6 +42,10 @@ pulldown-cmark = { version = "0.12", default-features = false, features = ["html
 oauth2 = "4"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+jsonwebtoken = "9"
+hmac = "0.12"
+rand = "0.8"
+urlencoding = "2"
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3.0"
