@@ -12,7 +12,6 @@ pub mod router;
 pub mod supervisor;
 pub mod validation;
 
-pub mod git_http;
 pub mod test_helpers;
 
 pub mod metrics_exporter;

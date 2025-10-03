@@ -21,7 +21,7 @@ trap cleanup EXIT
   FORGE_REPOS_PATH="$REPOS_DIR" \
   FORGE_EXTENSIONS_DIR="$EXT_DIR" \
   FORGE_GIT_HTTP_MODE=smart \
-  cargo run --manifest-path server/Cargo.toml --bin server >/tmp/forge-server.log 2>&1 &
+  cargo run --manifest-path crates/server/Cargo.toml --bin server >/tmp/forge-server.log 2>&1 &
   SERVER_PID=$!
 )
 

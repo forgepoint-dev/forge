@@ -1,15 +1,13 @@
-use axum::{extract::{Path, State, Query}, http::{StatusCode, header, HeaderMap}, response::{IntoResponse, Response}};
+use axum::{extract::{Path, Query, State}, http::{header, HeaderMap, StatusCode}, response::{IntoResponse, Response}};
+use metrics::{counter, histogram};
 use serde::Deserialize;
-
-use crate::api::server::AppState;
-use crate::git_http::pkt::{encode_pkt_line, PKT_FLUSH, decode_pkt_lines, Pkt};
-use crate::validation::slug::validate_slug;
-use crate::git_http::repo::{resolve_repo_dir, is_public_repo};
-use crate::git_http::pack;
+use std::time::Instant;
 use tokio::io::AsyncWriteExt;
 use tokio_util::io::ReaderStream;
-use metrics::{counter, histogram};
-use std::time::Instant;
+
+use crate::pkt::{decode_pkt_lines, encode_pkt_line, Pkt, PKT_FLUSH};
+use crate::repo::{is_public_repo, resolve_repo_dir};
+use crate::{pack, GitHttpState};
 
 #[derive(Debug, Deserialize)]
 pub struct ServiceQuery { pub service: Option<String> }
@@ -25,18 +23,21 @@ fn select_advertise_mode() -> AdvertiseMode {
 }
 
 // GET /:repo(.git)?/info/refs?service=git-upload-pack
-pub async fn info_refs_root(
-    State(state): State<AppState>,
+pub async fn info_refs_root<S>(
+    State(state): State<S>,
     Path(repo): Path<String>,
     Query(q): Query<ServiceQuery>,
-) -> Response {
+) -> Response
+where
+    S: GitHttpState,
+{
     let start = Instant::now();
     if q.service.as_deref() != Some("git-upload-pack") {
         return (StatusCode::BAD_REQUEST, "unsupported service").into_response();
     }
     // Gating: repo must be public
     let segments = vec![repo];
-    let repo_dir = match resolve_repo_dir(&state.storage, &segments) { Ok(p) => p, Err(e) => { tracing::debug!("resolve_repo_dir failed: {}", e); return (StatusCode::NOT_FOUND, "repo not found").into_response() } };
+    let repo_dir = match resolve_repo_dir(state.storage(), &segments) { Ok(p) => p, Err(e) => { tracing::debug!("resolve_repo_dir failed: {}", e); return (StatusCode::NOT_FOUND, "repo not found").into_response() } };
     if !is_public_repo(&repo_dir) { tracing::debug!("repo not public: {}", repo_dir.display()); return (StatusCode::NOT_FOUND, "repo not found").into_response(); }
 
     let resp = match select_advertise_mode() {
@@ -49,17 +50,20 @@ pub async fn info_refs_root(
 }
 
 // GET /:group/:repo(.git)?/info/refs?service=git-upload-pack
-pub async fn info_refs_group(
-    State(state): State<AppState>,
+pub async fn info_refs_group<S>(
+    State(state): State<S>,
     Path((group, repo)): Path<(String, String)>,
     Query(q): Query<ServiceQuery>,
-) -> Response {
+) -> Response
+where
+    S: GitHttpState,
+{
     let start = Instant::now();
     if q.service.as_deref() != Some("git-upload-pack") {
         return (StatusCode::BAD_REQUEST, "unsupported service").into_response();
     }
     let segments = vec![group, repo];
-    let repo_dir = match resolve_repo_dir(&state.storage, &segments) { Ok(p) => p, Err(e) => { tracing::debug!("resolve_repo_dir failed: {}", e); return (StatusCode::NOT_FOUND, "repo not found").into_response() } };
+    let repo_dir = match resolve_repo_dir(state.storage(), &segments) { Ok(p) => p, Err(e) => { tracing::debug!("resolve_repo_dir failed: {}", e); return (StatusCode::NOT_FOUND, "repo not found").into_response() } };
     if !is_public_repo(&repo_dir) { tracing::debug!("repo not public: {}", repo_dir.display()); return (StatusCode::NOT_FOUND, "repo not found").into_response(); }
 
     let resp = match select_advertise_mode() {
@@ -72,22 +76,28 @@ pub async fn info_refs_group(
 }
 
 // POST /:repo(.git)?/git-upload-pack
-pub async fn upload_pack_root(
-    State(state): State<AppState>,
+pub async fn upload_pack_root<S>(
+    State(state): State<S>,
     Path(repo): Path<String>,
     headers: HeaderMap,
     body: axum::body::Body,
-) -> Response {
+) -> Response
+where
+    S: GitHttpState,
+{
     handle_upload_pack(state, vec![repo], headers, body).await
 }
 
 // POST /:group/:repo(.git)?/git-upload-pack
-pub async fn upload_pack_group(
-    State(state): State<AppState>,
+pub async fn upload_pack_group<S>(
+    State(state): State<S>,
     Path((group, repo)): Path<(String, String)>,
     headers: HeaderMap,
     body: axum::body::Body,
-) -> Response {
+) -> Response
+where
+    S: GitHttpState,
+{
     handle_upload_pack(state, vec![group, repo], headers, body).await
 }
 
@@ -96,9 +106,12 @@ pub async fn receive_pack_blocked() -> impl IntoResponse {
     (StatusCode::FORBIDDEN, "push over HTTP is disabled")
 }
 
-async fn advertise_v2_rust(state: &AppState, segments: &[String], _headers: &HeaderMap) -> Response {
+async fn advertise_v2_rust<S>(state: &S, segments: &[String], _headers: &HeaderMap) -> Response
+where
+    S: GitHttpState,
+{
     // Validate repo exists and is exported
-    let repo_dir = match resolve_repo_dir(&state.storage, segments) { Ok(p) => p, Err(_) => return (StatusCode::NOT_FOUND, "repo not found").into_response() };
+    let repo_dir = match resolve_repo_dir(state.storage(), segments) { Ok(p) => p, Err(_) => return (StatusCode::NOT_FOUND, "repo not found").into_response() };
     if !is_public_repo(&repo_dir) { return (StatusCode::NOT_FOUND, "repo not found").into_response(); }
 
     // Compose a protocol v2 advertisement matching git http-backend semantics closely.
@@ -134,8 +147,11 @@ async fn advertise_v2_rust(state: &AppState, segments: &[String], _headers: &Hea
         .expect("response build")
 }
 
-async fn advertise_v2_via_git(state: &AppState, segments: &[String], headers: &HeaderMap) -> Response {
-    let repo_dir = match resolve_repo_dir(&state.storage, segments) { Ok(p) => p, Err(_) => return (StatusCode::NOT_FOUND, "repo not found").into_response() };
+async fn advertise_v2_via_git<S>(state: &S, segments: &[String], headers: &HeaderMap) -> Response
+where
+    S: GitHttpState,
+{
+    let repo_dir = match resolve_repo_dir(state.storage(), segments) { Ok(p) => p, Err(_) => return (StatusCode::NOT_FOUND, "repo not found").into_response() };
     if !is_public_repo(&repo_dir) { return (StatusCode::NOT_FOUND, "repo not found").into_response(); }
     let mut cmd = tokio::process::Command::new("git");
     cmd.arg("upload-pack").arg("--stateless-rpc").arg("--advertise-refs").arg(repo_dir);
@@ -199,15 +215,18 @@ async fn advertise_v2_via_git(state: &AppState, segments: &[String], headers: &H
     }
 }
 
-async fn handle_upload_pack(state: AppState, mut segments: Vec<String>, headers: HeaderMap, body: axum::body::Body) -> Response {
+async fn handle_upload_pack<S>(state: S, mut segments: Vec<String>, headers: HeaderMap, body: axum::body::Body) -> Response
+where
+    S: GitHttpState,
+{
     // normalize and validate segments
     for s in &mut segments { if let Some(stripped) = s.strip_suffix(".git") { *s = stripped.to_string(); } }
-    for s in &segments { if let Err(e) = validate_slug(s) { return (StatusCode::BAD_REQUEST, e.to_string()).into_response(); } }
+    for s in &segments { if let Err(e) = state.validate_slug(s) { return (StatusCode::BAD_REQUEST, e.to_string()).into_response(); } }
 
     // Concurrency limit per request
-    let _permit = state.git_semaphore.clone().acquire_owned().await.ok();
+    let _permit = state.git_semaphore().clone().acquire_owned().await.ok();
 
-    let max = state.git_max_body;
+    let max = state.git_max_body();
     let bytes = match axum::body::to_bytes(body, max).await {
         Ok(b) => b,
         Err(_) => return (StatusCode::BAD_REQUEST, "invalid request body").into_response(),
@@ -228,7 +247,7 @@ async fn handle_upload_pack(state: AppState, mut segments: Vec<String>, headers:
     }
 
     // Resolve repository directory for subsequent operations
-    let repo_dir = match resolve_repo_dir(&state.storage, &segments) { Ok(p) => p, Err(_) => return (StatusCode::NOT_FOUND, "repo not found").into_response() };
+    let repo_dir = match resolve_repo_dir(state.storage(), &segments) { Ok(p) => p, Err(_) => return (StatusCode::NOT_FOUND, "repo not found").into_response() };
     if !is_public_repo(&repo_dir) { return (StatusCode::NOT_FOUND, "repo not found").into_response(); }
 
     // Select backend and apply timeout per request
@@ -236,7 +255,7 @@ async fn handle_upload_pack(state: AppState, mut segments: Vec<String>, headers:
         ("git", _) => {
             let start = Instant::now();
             let fut = proxy_to_git_upload_pack(&state, &segments, &bytes, &headers);
-            let resp = match tokio::time::timeout(std::time::Duration::from_millis(state.git_timeout_ms), fut).await {
+            let resp = match tokio::time::timeout(std::time::Duration::from_millis(state.git_timeout_ms()), fut).await {
                 Ok(r) => r,
                 Err(_) => return (StatusCode::REQUEST_TIMEOUT, "git upload-pack timed out").into_response(),
             };
@@ -264,7 +283,7 @@ async fn handle_upload_pack(state: AppState, mut segments: Vec<String>, headers:
                     );
                     let start = Instant::now();
                     let fut = pack::serve_fetch(&repo_dir, &req, &headers, max);
-                    let resp = match tokio::time::timeout(std::time::Duration::from_millis(state.git_timeout_ms), fut).await {
+                    let resp = match tokio::time::timeout(std::time::Duration::from_millis(state.git_timeout_ms()), fut).await {
                         Ok(r) => r,
                         Err(_) => return (StatusCode::REQUEST_TIMEOUT, "fetch timed out").into_response(),
                     };
@@ -282,9 +301,12 @@ async fn handle_upload_pack(state: AppState, mut segments: Vec<String>, headers:
 #[derive(Debug, Default, Clone)]
 struct LsRefsOptions { ref_prefix: Vec<String>, peel: bool, symrefs: bool }
 
-async fn respond_ls_refs(state: &AppState, segments: &[String], opts: &LsRefsOptions) -> Response {
+async fn respond_ls_refs<S>(state: &S, segments: &[String], opts: &LsRefsOptions) -> Response
+where
+    S: GitHttpState,
+{
     use gix::prelude::*;
-    let repo_dir = match resolve_repo_dir(&state.storage, segments) { Ok(p) => p, Err(_) => return (StatusCode::NOT_FOUND, "repo not found").into_response() };
+    let repo_dir = match resolve_repo_dir(state.storage(), segments) { Ok(p) => p, Err(_) => return (StatusCode::NOT_FOUND, "repo not found").into_response() };
     if !is_public_repo(&repo_dir) { return (StatusCode::NOT_FOUND, "repo not found").into_response(); }
     let repo = match gix::open(&repo_dir) { Ok(r) => r, Err(_) => return (StatusCode::NOT_FOUND, "invalid repository").into_response() };
 
@@ -513,8 +535,11 @@ fn respond_fetch_not_implemented(_req: &FetchRequest) -> Response {
     respond_fetch_error("fetch not implemented yet")
 }
 
-async fn proxy_to_git_upload_pack(state: &AppState, segments: &[String], request_body: &[u8], headers: &HeaderMap) -> Response {
-    let repo_dir = match resolve_repo_dir(&state.storage, segments) { Ok(p) => p, Err(_) => return (StatusCode::NOT_FOUND, "repo not found").into_response() };
+async fn proxy_to_git_upload_pack<S>(state: &S, segments: &[String], request_body: &[u8], headers: &HeaderMap) -> Response
+where
+    S: GitHttpState,
+{
+    let repo_dir = match resolve_repo_dir(state.storage(), segments) { Ok(p) => p, Err(_) => return (StatusCode::NOT_FOUND, "repo not found").into_response() };
     if !is_public_repo(&repo_dir) { return (StatusCode::NOT_FOUND, "repo not found").into_response(); }
     let mut cmd = tokio::process::Command::new("git");
     cmd.arg("upload-pack").arg("--stateless-rpc").arg(repo_dir);
@@ -543,16 +568,125 @@ async fn proxy_to_git_upload_pack(state: &AppState, segments: &[String], request
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::git_http::pkt::encode_pkt_line;
-    use crate::api::server::AppState;
-    use crate::extensions::ExtensionManager;
-    use crate::repository::RepositoryStorage;
-    use crate::router::RouterState;
-    use std::sync::Arc;
-    use tempfile::TempDir;
+    use anyhow::Result as AnyResult;
     use axum::extract::{Path as AxPath, Query as AxQuery, State as AxState};
     use axum::http::HeaderMap as AxHeaderMap;
-    use anyhow::Result as AnyResult;
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+    use tempfile::TempDir;
+    use tokio::sync::Semaphore;
+
+    use crate::pkt::encode_pkt_line;
+
+    #[derive(Clone)]
+    struct TestStorage {
+        root: PathBuf,
+    }
+
+    impl RepositoryProvider for TestStorage {
+        fn ensure_local_repository(&self, segments: &[String]) -> anyhow::Result<PathBuf> {
+            let mut path = self.root.clone();
+            for segment in segments {
+                path.push(segment);
+            }
+            if path.is_dir() {
+                Ok(path)
+            } else {
+                Err(anyhow::anyhow!("repository directory not found"))
+            }
+        }
+    }
+
+    #[derive(Clone)]
+    struct TestState {
+        storage: TestStorage,
+        max_body: usize,
+        timeout_ms: u64,
+        semaphore: Arc<Semaphore>,
+    }
+
+    impl GitHttpState for TestState {
+        type Storage = TestStorage;
+
+        fn storage(&self) -> &Self::Storage {
+            &self.storage
+        }
+
+        fn git_semaphore(&self) -> &Arc<Semaphore> {
+            &self.semaphore
+        }
+
+        fn git_max_body(&self) -> usize {
+            self.max_body
+        }
+
+        fn git_timeout_ms(&self) -> u64 {
+            self.timeout_ms
+        }
+
+        fn validate_slug(&self, slug: &str) -> anyhow::Result<()> {
+            validate_slug(slug)
+        }
+    }
+
+    fn validate_slug(slug: &str) -> anyhow::Result<()> {
+        let is_valid = !slug.is_empty()
+            && !slug.starts_with('-')
+            && !slug.ends_with('-')
+            && !slug.contains("--")
+            && slug
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+
+        if is_valid {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("slug must be lowercase kebab-case"))
+        }
+    }
+
+    async fn mk_app_state() -> AnyResult<(TestState, TempDir)> {
+        let local_dir = TempDir::new()?;
+        let state = TestState {
+            storage: TestStorage {
+                root: local_dir.path().to_path_buf(),
+            },
+            max_body: 64 * 1024 * 1024,
+            timeout_ms: 60_000,
+            semaphore: Arc::new(Semaphore::new(64)),
+        };
+        Ok((state, local_dir))
+    }
+
+    async fn init_bare_repo(path: &Path) {
+        std::fs::create_dir_all(path).ok();
+        let _ = std::process::Command::new("git").arg("init").arg("--bare").arg(path).status();
+    }
+
+    async fn seed_main_branch(bare: &Path) {
+        let tmp = TempDir::new().unwrap();
+        let work = tmp.path();
+        let _ = std::process::Command::new("git").current_dir(work).arg("init").status();
+        std::fs::write(work.join("README.md"), b"hello\n").ok();
+        let _ = std::process::Command::new("git").current_dir(work).args(["add", "README.md"]).status();
+        let _ = std::process::Command::new("git").current_dir(work).args([
+            "-c",
+            "user.email=t@e",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-m",
+            "init",
+        ]).status();
+        let _ = std::process::Command::new("git").current_dir(work).args(["branch", "-M", "main"]).status();
+        let _ = std::process::Command::new("git").current_dir(work).args([
+            "remote",
+            "add",
+            "origin",
+            &bare.to_string_lossy(),
+        ]).status();
+        let _ = std::process::Command::new("git").current_dir(work).args(["push", "origin", "main"]).status();
+    }
 
     #[test]
     fn parse_minimal_fetch() {
@@ -609,13 +743,9 @@ mod tests {
 
     #[test]
     fn advertise_v2_shape() {
-        // Build the advertisement bytes and check for key lines. We call the pure function behind
-        // the HTTP wrapper to avoid filesystem access in this unit test.
         let mut body = Vec::new();
-        // version banner
         body.extend_from_slice(&encode_pkt_line(b"version 2\n"));
         body.extend_from_slice(PKT_FLUSH);
-        // capabilities (must include these tokens when decoded)
         let adv = vec![
             encode_pkt_line(b"agent=forge/x.y.z\n"),
             encode_pkt_line(b"session-id=abc\n"),
@@ -628,61 +758,31 @@ mod tests {
             encode_pkt_line(b"fetch=deepen-since\n"),
             encode_pkt_line(b"fetch=deepen-not\n"),
         ];
-        for a in adv { body.extend_from_slice(&a); }
+        for a in adv {
+            body.extend_from_slice(&a);
+        }
         body.extend_from_slice(PKT_FLUSH);
         let pkts = decode_pkt_lines(&body).unwrap();
         let mut s = String::new();
         for p in pkts {
-            if let Pkt::Data(d) = p { s.push_str(std::str::from_utf8(&d).unwrap()); }
+            if let Pkt::Data(d) = p {
+                s.push_str(std::str::from_utf8(&d).unwrap());
+            }
         }
         assert!(s.contains("version 2") || s.contains("ls-refs"));
         assert!(s.contains("object-format=sha1"));
         assert!(s.contains("fetch=filter"));
     }
 
-    async fn mk_app_state() -> AnyResult<(AppState, TempDir, TempDir, TempDir, TempDir)> {
-        let pool = crate::test_helpers::create_test_pool().await?;
-        let local_dir = TempDir::new()?;
-        let remote_dir = TempDir::new()?;
-        let extensions_dir = TempDir::new()?;
-        let extensions_db_dir = TempDir::new()?;
-        let storage = RepositoryStorage::new(local_dir.path().to_path_buf(), remote_dir.path().to_path_buf());
-        let mut ext_mgr = ExtensionManager::new(extensions_dir.path().to_path_buf(), extensions_db_dir.path().to_path_buf());
-        // no extensions for these tests
-        let router = RouterState::new(pool, storage.clone(), Arc::new(ext_mgr))?;
-        let app_state = AppState {
-            router: Arc::new(router),
-            auth: None,
-            storage,
-            git_max_body: 64 * 1024 * 1024,
-            git_timeout_ms: 60_000,
-            git_semaphore: Arc::new(tokio::sync::Semaphore::new(64)),
-        };
-        Ok((app_state, local_dir, remote_dir, extensions_dir, extensions_db_dir))
-    }
-
-    async fn init_bare_repo(path: &std::path::Path) {
-        std::fs::create_dir_all(path).ok();
-        let _ = std::process::Command::new("git").arg("init").arg("--bare").arg(path).status();
-    }
-
-    async fn seed_main_branch(bare: &std::path::Path) {
-        // create a working repo, make a commit, and push main to the bare repo
-        let tmp = TempDir::new().unwrap();
-        let work = tmp.path();
-        let _ = std::process::Command::new("git").current_dir(work).arg("init").status();
-        std::fs::write(work.join("README.md"), b"hello\n").ok();
-        let _ = std::process::Command::new("git").current_dir(work).args(["add","README.md"]).status();
-        let _ = std::process::Command::new("git").current_dir(work).args(["-c","user.email=t@e","-c","user.name=t","commit","-m","init"]).status();
-        let _ = std::process::Command::new("git").current_dir(work).args(["branch","-M","main"]).status();
-        let _ = std::process::Command::new("git").current_dir(work).args(["remote","add","origin",&bare.to_string_lossy()]).status();
-        let _ = std::process::Command::new("git").current_dir(work).args(["push","origin","main"]).status();
-    }
-
     #[tokio::test]
     async fn info_refs_requires_service_param() {
-        let (state, _l, _r, _e, _edb) = mk_app_state().await.unwrap();
-        let resp = info_refs_root(AxState(state), AxPath("alpha".to_string()), AxQuery(ServiceQuery { service: Some("not-upload-pack".to_string()) })).await;
+        let (state, _local_dir) = mk_app_state().await.unwrap();
+        let resp = info_refs_root(
+            AxState(state),
+            AxPath("alpha".to_string()),
+            AxQuery(ServiceQuery { service: Some("not-upload-pack".to_string()) }),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
@@ -691,17 +791,28 @@ mod tests {
         unsafe {
             std::env::set_var("FORGE_GIT_SMART_V2_ADVERTISE", "rust");
         }
-        let (state, local_dir, _r, _e, _edb) = mk_app_state().await.unwrap();
-        // create bare repo but do NOT mark public
+        let (state, local_dir) = mk_app_state().await.unwrap();
         let repo = local_dir.path().join("alpha.git");
         init_bare_repo(&repo).await;
-        let resp_404 = info_refs_root(AxState(state.clone()), AxPath("alpha".to_string()), AxQuery(ServiceQuery { service: Some("git-upload-pack".to_string()) })).await;
+        let resp_404 = info_refs_root(
+            AxState(state.clone()),
+            AxPath("alpha".to_string()),
+            AxQuery(ServiceQuery { service: Some("git-upload-pack".to_string()) }),
+        )
+        .await;
         assert_eq!(resp_404.status(), StatusCode::NOT_FOUND);
-        // mark public and retry
         std::fs::write(repo.join("git-daemon-export-ok"), b"").unwrap();
-        let resp = info_refs_root(AxState(state), AxPath("alpha".to_string()), AxQuery(ServiceQuery { service: Some("git-upload-pack".to_string()) })).await;
+        let resp = info_refs_root(
+            AxState(state),
+            AxPath("alpha".to_string()),
+            AxQuery(ServiceQuery { service: Some("git-upload-pack".to_string()) }),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
-        assert_eq!(resp.headers().get(header::CONTENT_TYPE).unwrap(), "application/x-git-upload-pack-advertisement");
+        assert_eq!(
+            resp.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/x-git-upload-pack-advertisement"
+        );
         let bytes = axum::body::to_bytes(resp.into_body(), 16 << 20).await.unwrap();
         assert!(std::str::from_utf8(&bytes).unwrap().contains("version 2"));
     }
@@ -717,13 +828,12 @@ mod tests {
         unsafe {
             std::env::set_var("FORGE_GIT_SMART_V2_BACKEND", "rust");
         }
-        let (state, local_dir, _r, _e, _edb) = mk_app_state().await.unwrap();
+        let (state, local_dir) = mk_app_state().await.unwrap();
         let repo = local_dir.path().join("alpha.git");
         init_bare_repo(&repo).await;
         std::fs::write(repo.join("git-daemon-export-ok"), b"").unwrap();
         seed_main_branch(&repo).await;
 
-        // Build ls-refs request
         let mut req = Vec::new();
         req.extend_from_slice(&encode_pkt_line(b"command=ls-refs\n"));
         req.extend_from_slice(&encode_pkt_line(b"ref-prefix refs/heads\n"));
@@ -732,13 +842,18 @@ mod tests {
         req.extend_from_slice(PKT_FLUSH);
 
         let headers = AxHeaderMap::new();
-        let resp = upload_pack_root(AxState(state), AxPath("alpha".to_string()), headers, axum::body::Body::from(req)).await;
+        let resp = upload_pack_root(
+            AxState(state),
+            AxPath("alpha".to_string()),
+            headers,
+            axum::body::Body::from(req),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(resp.headers().get(header::CONTENT_TYPE).unwrap(), "application/x-git-upload-pack-result");
         let bytes = axum::body::to_bytes(resp.into_body(), 16 << 20).await.unwrap();
         let s = std::str::from_utf8(&bytes).unwrap();
         assert!(s.contains("refs/heads/main"));
-        // With ref-prefix, HEAD may be omitted unless it matches; allow either case.
     }
 
     #[tokio::test]
@@ -746,7 +861,7 @@ mod tests {
         unsafe {
             std::env::set_var("FORGE_GIT_SMART_V2_BACKEND", "rust");
         }
-        let (state, local_dir, _r, _e, _edb) = mk_app_state().await.unwrap();
+        let (state, local_dir) = mk_app_state().await.unwrap();
         let repo = local_dir.path().join("alpha.git");
         init_bare_repo(&repo).await;
         std::fs::write(repo.join("git-daemon-export-ok"), b"").unwrap();
@@ -755,7 +870,13 @@ mod tests {
         req.extend_from_slice(&encode_pkt_line(b"command=unknown\n"));
         req.extend_from_slice(PKT_FLUSH);
         let headers = AxHeaderMap::new();
-        let resp = upload_pack_root(AxState(state), AxPath("alpha".to_string()), headers, axum::body::Body::from(req)).await;
+        let resp = upload_pack_root(
+            AxState(state),
+            AxPath("alpha".to_string()),
+            headers,
+            axum::body::Body::from(req),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
@@ -764,7 +885,7 @@ mod tests {
         unsafe {
             std::env::set_var("FORGE_GIT_SMART_V2_BACKEND", "rust");
         }
-        let (state, local_dir, _r, _e, _edb) = mk_app_state().await.unwrap();
+        let (state, local_dir) = mk_app_state().await.unwrap();
         let repo = local_dir.path().join("alpha.git");
         init_bare_repo(&repo).await;
         std::fs::write(repo.join("git-daemon-export-ok"), b"").unwrap();
@@ -775,7 +896,13 @@ mod tests {
         req.extend_from_slice(&encode_pkt_line(b"want 0123456789abcdef0123456789abcdef01234567\n"));
         req.extend_from_slice(PKT_FLUSH);
         let headers = AxHeaderMap::new();
-        let resp = upload_pack_root(AxState(state), AxPath("alpha".to_string()), headers, axum::body::Body::from(req)).await;
+        let resp = upload_pack_root(
+            AxState(state),
+            AxPath("alpha".to_string()),
+            headers,
+            axum::body::Body::from(req),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 }

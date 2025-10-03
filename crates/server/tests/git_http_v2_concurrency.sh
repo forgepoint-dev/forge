@@ -27,7 +27,7 @@ trap cleanup EXIT
   FORGE_GIT_HTTP_EXPORT_ALL=true \
   FORGE_GIT_SMART_V2_BACKEND=git \
   FORGE_LISTEN_ADDR="127.0.0.1:$PORT" \
-  cargo run --manifest-path server/Cargo.toml --bin server >/tmp/forge-server.log 2>&1 &
+  cargo run --manifest-path crates/server/Cargo.toml --bin server >/tmp/forge-server.log 2>&1 &
   SERVER_PID=$!
 )
 

@@ -1,11 +1,17 @@
 use std::path::PathBuf;
 
-use crate::repository::RepositoryStorage;
+/// Trait representing repository storage that can resolve repository paths.
+pub trait RepositoryProvider {
+    fn ensure_local_repository(&self, segments: &[String]) -> anyhow::Result<PathBuf>;
+}
 
-pub fn resolve_repo_dir(
-    storage: &RepositoryStorage,
+pub fn resolve_repo_dir<P>(
+    storage: &P,
     segments: &[String],
-) -> anyhow::Result<PathBuf> {
+) -> anyhow::Result<PathBuf>
+where
+    P: RepositoryProvider,
+{
     // Accept repo or repo.git directory structure. Try exact first, then with .git suffix.
     match storage.ensure_local_repository(segments) {
         Ok(p) => Ok(p),

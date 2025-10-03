@@ -1536,6 +1536,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7"
 
 [[package]]
+name = "git-http"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "bytes",
+ "futures",
+ "gix",
+ "metrics",
+ "rand 0.8.5",
+ "serde",
+ "sha1",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+]
+
+[[package]]
 name = "gix"
 version = "0.73.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4920,6 +4939,7 @@ dependencies = [
  "cap-std",
  "cuid2",
  "futures",
+ "git-http",
  "gix",
  "graphql-parser",
  "graphql-tools",

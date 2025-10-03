@@ -42,37 +42,37 @@ jobs:
         run: nix develop --impure -c cargo fetch
 
       - name: Baseline (git backend) — clone
-        run: nix develop --impure -c bash server/tests/git_http_v2_clone.sh
+        run: nix develop --impure -c bash crates/server/tests/git_http_v2_clone.sh
 
       - name: Baseline (git backend) — shallow clone
-        run: nix develop --impure -c bash server/tests/git_http_v2_shallow.sh
+        run: nix develop --impure -c bash crates/server/tests/git_http_v2_shallow.sh
 
       - name: Baseline (git backend) — incremental fetch
-        run: nix develop --impure -c bash server/tests/git_http_v2_fetch_update.sh
+        run: nix develop --impure -c bash crates/server/tests/git_http_v2_fetch_update.sh
 
       - name: Baseline (git backend) — concurrency
         env:
           N: 4
-        run: nix develop --impure -c bash server/tests/git_http_v2_concurrency.sh
+        run: nix develop --impure -c bash crates/server/tests/git_http_v2_concurrency.sh
 
       - name: Baseline (git backend) — visibility (export-ok)
-        run: nix develop --impure -c bash server/tests/git_http_v2_visibility.sh
+        run: nix develop --impure -c bash crates/server/tests/git_http_v2_visibility.sh
 
       - name: Rust backend — end-to-end
-        run: nix develop --impure -c bash server/tests/git_http_v2_rust_backend.sh
+        run: nix develop --impure -c bash crates/server/tests/git_http_v2_rust_backend.sh
 
       - name: Partial clone — blob:none (rust)
         continue-on-error: true
-        run: nix develop --impure -c bash server/tests/git_http_v2_partial_blob_none.sh
+        run: nix develop --impure -c bash crates/server/tests/git_http_v2_partial_blob_none.sh
 
       - name: Partial clone — tree:1 (rust)
         continue-on-error: true
-        run: nix develop --impure -c bash server/tests/git_http_v2_filter_tree.sh
+        run: nix develop --impure -c bash crates/server/tests/git_http_v2_filter_tree.sh
 
       - name: Packet trace diff (git vs rust)
         env:
           TRACE_SCENARIOS: "simple-clone shallow-clone incremental-fetch"
-        run: nix develop --impure -c bash server/tests/git_http_v2_trace_diff.sh
+        run: nix develop --impure -c bash crates/server/tests/git_http_v2_trace_diff.sh
 
       - name: Benchmark clone (git vs rust)
         continue-on-error: true
@@ -81,7 +81,7 @@ jobs:
           BENCH_THRESHOLD: 1.20
           BENCH_ENFORCE: 0
           BENCH_SCENARIOS: "simple-clone shallow-clone"
-        run: nix develop --impure -c bash server/tests/git_http_v2_bench.sh
+        run: nix develop --impure -c bash crates/server/tests/git_http_v2_bench.sh
 
       - name: Upload debug logs on failure
         if: failure()

@@ -93,3 +93,9 @@ impl RepositoryStorage {
         Ok(result)
     }
 }
+
+impl git_http::RepositoryProvider for RepositoryStorage {
+    fn ensure_local_repository(&self, segments: &[String]) -> anyhow::Result<PathBuf> {
+        RepositoryStorage::ensure_local_repository(self, segments)
+    }
+}

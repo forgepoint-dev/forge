@@ -13,8 +13,8 @@ use futures::StreamExt;
 use sha1::Digest;
 use metrics::{counter, histogram};
 
-use crate::git_http::pkt::{encode_pkt_line, PKT_FLUSH, PKT_DELIM};
-use crate::git_http::v2::FetchRequest;
+use crate::pkt::{encode_pkt_line, PKT_FLUSH, PKT_DELIM};
+use crate::v2::FetchRequest;
 
 #[allow(dead_code)]
 pub struct PackBuildStats {
@@ -623,7 +623,7 @@ fn plan_pack(repo_dir: PathBuf, req: &FetchRequest) -> anyhow::Result<PackPlan> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::git_http::pkt::{decode_pkt_lines, Pkt};
+    use crate::pkt::{decode_pkt_lines, Pkt};
 
     #[test]
     fn encode_obj_header_small_sizes() {

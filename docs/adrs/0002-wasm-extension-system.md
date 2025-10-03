@@ -75,7 +75,7 @@ Leverage async-graphql's dynamic schema capabilities:
 
 ### 6. Extension Loading Process
 
-1. Scan `server/extensions/` directory for `.wasm` files at startup
+1. Scan `crates/server/extensions/` directory for `.wasm` files at startup
 2. Initialize Wasmtime engine with WASI support
 3. For each extension:
    - Load WASM module
@@ -94,17 +94,19 @@ Leverage async-graphql's dynamic schema capabilities:
 ## Implementation Structure
 
 ```
-server/
-├── src/
-│   ├── extensions/
-│   │   ├── mod.rs         # Extension system core
-│   │   ├── loader.rs      # WASM loading and lifecycle
-│   │   ├── interface.rs   # WIT bindings and communication
-│   │   └── schema.rs      # Dynamic schema management
-├── extensions/            # Extension WASM modules
-│   └── issues.wasm
-├── wit/                   # WebAssembly Interface Types
-│   └── extension.wit
+crates/
+└── server/
+    ├── src/
+    │   ├── extensions/
+    │   │   ├── mod.rs         # Extension system core
+    │   │   ├── loader.rs      # WASM loading and lifecycle
+    │   │   ├── interface.rs   # WIT bindings and communication
+    │   │   └── schema/        # Dynamic schema management modules
+    ├── extensions/            # Extension WASM modules
+    │   └── issues.wasm
+packages/
+└── wit/
+    └── extension.wit          # WebAssembly Interface Types shared across extensions
 ```
 
 ## Consequences

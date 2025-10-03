@@ -23,40 +23,34 @@ trap cleanup EXIT
   FORGE_EXTENSIONS_DIR="$EXT_DIR" \
   FORGE_GIT_HTTP_MODE=smart \
   FORGE_GIT_HTTP_EXPORT_ALL=true \
-  FORGE_GIT_SMART_V2_BACKEND=rust \
+  FORGE_GIT_SMART_V2_BACKEND=git \
   FORGE_LISTEN_ADDR="127.0.0.1:$PORT" \
-  cargo run --manifest-path server/Cargo.toml --bin server >/tmp/forge-server.log 2>&1 &
+  cargo run --manifest-path crates/server/Cargo.toml --bin server >/tmp/forge-server.log 2>&1 &
   SERVER_PID=$!
 )
 
 for i in {1..60}; do
-  if curl -s "$SERVER_URL/healthz" >/dev/null 2>&1; then break; fi
+  if curl -s "$SERVER_URL" >/dev/null 2>&1; then break; fi
   sleep 0.2
 done
 
 mkdir -p "$REPOS_DIR/$REPO_NAME.git"
 git init --bare "$REPOS_DIR/$REPO_NAME.git" >/dev/null
-touch "$REPOS_DIR/$REPO_NAME.git/git-daemon-export-ok"
 
 TMP=$(mktemp -d)
 git -C "$TMP" init >/dev/null
-echo 1 > "$TMP/file"; git -C "$TMP" add file; git -C "$TMP" -c user.email=t@e -c user.name=t -c commit.gpgsign=false commit -m c1 >/dev/null
+echo 1 > "$TMP/file"; git -C "$TMP" add file; git -C "$TMP" -c user.email=t@e -c user.name=t commit -m c1 >/dev/null
 git -C "$TMP" branch -M main >/dev/null
 git -C "$TMP" remote add origin "$REPOS_DIR/$REPO_NAME.git"
 git -C "$TMP" push origin main >/dev/null
 
 DEST=$(mktemp -d)
-if ! git -c protocol.version=2 clone "$SERVER_URL/$REPO_NAME" "$DEST/repo" >/tmp/git-clone.out 2>/tmp/git-clone.err; then
-  echo "clone failed"; cat /tmp/git-clone.err; exit 1;
-fi
-echo "clone ok"
+git -c protocol.version=2 clone "$SERVER_URL/$REPO_NAME" "$DEST/repo" >/dev/null
 
-# Add another commit and fetch
-echo 2 >> "$TMP/file"; git -C "$TMP" -c commit.gpgsign=false commit -am c2 >/dev/null
+# Add another commit to origin and fetch
+echo 2 >> "$TMP/file"; git -C "$TMP" commit -am c2 >/dev/null
 git -C "$TMP" push origin main >/dev/null
-if ! git -C "$DEST/repo" -c protocol.version=2 fetch origin >/tmp/git-fetch.out 2>/tmp/git-fetch.err; then
-  echo "fetch failed"; cat /tmp/git-fetch.err; exit 1;
-fi
-echo "fetch ok"
 
-echo "[git-http-v2-rust] done"
+git -C "$DEST/repo" -c protocol.version=2 fetch origin >/dev/null
+git -C "$DEST/repo" rev-parse FETCH_HEAD >/dev/null
+echo "ok"

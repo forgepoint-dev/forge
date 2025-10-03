@@ -36,7 +36,7 @@ start_server() {
     FORGE_GIT_HTTP_EXPORT_ALL=true \
     FORGE_GIT_SMART_V2_BACKEND="$backend" \
     FORGE_LISTEN_ADDR="127.0.0.1:$PORT" \
-    nix develop --impure -c cargo run --manifest-path server/Cargo.toml --bin server >/tmp/forge-server.log 2>&1 &
+    nix develop --impure -c cargo run --manifest-path crates/server/Cargo.toml --bin server >/tmp/forge-server.log 2>&1 &
     SERVER_PID=$!
     echo "$SERVER_PID" > /tmp/forge-server.pid
   )

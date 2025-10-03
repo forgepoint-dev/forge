@@ -30,8 +30,8 @@ clean:
 
 # Build and copy to server extensions dir (for local testing)
 install-local: build
-    mkdir -p ../../../server/extensions_dir
-    cp target/wasm32-wasip1/release/forgepoint_extension_issues.wasm ../../../server/extensions_dir/issues.wasm
+    mkdir -p ../../../crates/server/extensions
+    cp target/wasm32-wasip1/release/forgepoint_extension_issues.wasm ../../../crates/server/extensions/issues.wasm
 
 # Show the size of the built WASM file
 size: build

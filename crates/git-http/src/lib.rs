@@ -8,4 +8,8 @@ pub mod negotiation;
 pub mod pack;
 pub mod pkt;
 pub mod repo;
+pub mod state;
 pub mod v2;
+
+pub use repo::RepositoryProvider;
+pub use state::GitHttpState;

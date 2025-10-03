@@ -18,7 +18,7 @@ This document lays out a step-by-step plan to replace the current async-graphql-
 
 ## Phase 1 – Adopt Hive Router Crates End-to-End
 
-**Status:** ✅ Completed. Hive Router crates now provide the HTTP pipeline and Axum handler (`server/Cargo.toml`, `server/src/api/server.rs`).
+**Status:** ✅ Completed. Hive Router crates now provide the HTTP pipeline and Axum handler (`crates/server/Cargo.toml`, `crates/server/src/api/server.rs`).
 
 Goal: run the actual Hive Router pipeline (normalize → validate → plan → execute) in-process.
 
@@ -46,7 +46,7 @@ Goal: run the actual Hive Router pipeline (normalize → validate → plan → e
 
 ## Phase 2 – Implement Core Subgraph Executor
 
-**Status:** ✅ Completed. The core planner/executor wiring is live (`server/src/router/mod.rs`, `server/src/router/core_executor.rs`).
+**Status:** ✅ Completed. The core planner/executor wiring is live (`crates/server/src/router/mod.rs`, `crates/server/src/router/core_executor.rs`).
 
 Goal: replace the stub with a proper executor for the “core” subgraph (groups, repositories, etc.).
 
@@ -77,7 +77,7 @@ Goal: replace the stub with a proper executor for the “core” subgraph (group
 
 ## Phase 3 – Implement Extension Subgraph Executors
 
-**Status:** 🚧 In progress. Extension execution is wired but representations/`@requires` handling and integration tests are still pending (`server/src/router/extension_executor.rs`, `server/tests/router_pipeline.rs`).
+**Status:** 🚧 In progress. Extension execution is wired but representations/`@requires` handling and integration tests are still pending (`crates/server/src/router/extension_executor.rs`, `crates/server/tests/router_pipeline.rs`).
 
 Goal: call WASM extensions as first-class subgraphs.
 
@@ -100,7 +100,7 @@ Goal: call WASM extensions as first-class subgraphs.
 
 ## Phase 4 – Robust SDL Composition
 
-**Status:** ✅ Completed. The `SchemaComposer` now composes via AST transformations and Hive router tooling (`server/src/graphql/schema_composer.rs`).
+**Status:** ✅ Completed. The `SchemaComposer` now composes via AST transformations and Hive router tooling (`crates/server/src/graphql/schema_composer.rs`).
 
 Goal: generate supergraph SDL from structured data to avoid brittle string replacements.
 
@@ -121,7 +121,7 @@ Goal: generate supergraph SDL from structured data to avoid brittle string repla
 
 ## Phase 5 – Clean-up & Removal of Legacy Code
 
-**Status:** ⏳ Not started. The temporary `SchemaComposer` remains the active code path inside the router (`server/src/router/mod.rs`).
+**Status:** ⏳ Not started. The temporary `SchemaComposer` remains the active code path inside the router (`crates/server/src/router/mod.rs`).
 
 1. **Delete async-graphql schema and resolvers**
    - Remove `src/graphql/schema.rs`, `extension_resolver.rs`, and any async-graphql dependencies.
@@ -167,4 +167,3 @@ Goal: generate supergraph SDL from structured data to avoid brittle string repla
 ---
 
 > **Tip:** Keep your work in small commits per phase; it’s easier to review and revert. Regularly run `nix develop --impure -c cargo check`, unit/integration tests, and the server binary to catch regressions early.
-
