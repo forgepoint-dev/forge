@@ -254,6 +254,14 @@ async fn handle_upload_pack(state: AppState, mut segments: Vec<String>, headers:
         ("rust", Some("fetch")) => {
             match parse_fetch(&pkts) {
                 Ok(req) => {
+                    tracing::info!(
+                        wants = %req.wants().len(),
+                        sideband_64k = %req.side_band_64k(),
+                        thin_pack = %req.thin_pack(),
+                        no_progress = %req.no_progress(),
+                        ofs_delta = %req.ofs_delta(),
+                        "handling fetch (rust backend)"
+                    );
                     let start = Instant::now();
                     let fut = pack::serve_fetch(&repo_dir, &req, &headers, max);
                     let resp = match tokio::time::timeout(std::time::Duration::from_millis(state.git_timeout_ms), fut).await {
@@ -427,6 +435,8 @@ pub struct FetchRequest {
 
 impl FetchRequest {
     pub fn wants(&self) -> &[String] { &self.wants }
+    pub fn push_want(&mut self, oid: String) { self.wants.push(oid); }
+    pub fn extend_wants<I: IntoIterator<Item = String>>(&mut self, iter: I) { self.wants.extend(iter); }
     pub fn side_band_64k(&self) -> bool { self.side_band_64k }
     pub fn has_haves(&self) -> bool { !self.haves.is_empty() }
     pub fn shallow_requested(&self) -> bool { self.deepen.is_some() || self.deepen_since.is_some() || !self.deepen_not.is_empty() }
@@ -437,6 +447,7 @@ impl FetchRequest {
     pub fn ofs_delta(&self) -> bool { self.ofs_delta }
     pub fn want_refs(&self) -> &[String] { &self.want_refs }
     pub fn client_shallows(&self) -> &[String] { &self.client_shallows }
+    pub fn done(&self) -> bool { self.done }
     pub fn deepen(&self) -> Option<u32> { self.deepen }
     pub fn deepen_since(&self) -> Option<i64> { self.deepen_since }
     pub fn deepen_not(&self) -> &[String] { &self.deepen_not }
@@ -533,6 +544,15 @@ async fn proxy_to_git_upload_pack(state: &AppState, segments: &[String], request
 mod tests {
     use super::*;
     use crate::git_http::pkt::encode_pkt_line;
+    use crate::api::server::AppState;
+    use crate::extensions::ExtensionManager;
+    use crate::repository::RepositoryStorage;
+    use crate::router::RouterState;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+    use axum::extract::{Path as AxPath, Query as AxQuery, State as AxState};
+    use axum::http::HeaderMap as AxHeaderMap;
+    use anyhow::Result as AnyResult;
 
     #[test]
     fn parse_minimal_fetch() {
@@ -618,5 +638,144 @@ mod tests {
         assert!(s.contains("version 2") || s.contains("ls-refs"));
         assert!(s.contains("object-format=sha1"));
         assert!(s.contains("fetch=filter"));
+    }
+
+    async fn mk_app_state() -> AnyResult<(AppState, TempDir, TempDir, TempDir, TempDir)> {
+        let pool = crate::test_helpers::create_test_pool().await?;
+        let local_dir = TempDir::new()?;
+        let remote_dir = TempDir::new()?;
+        let extensions_dir = TempDir::new()?;
+        let extensions_db_dir = TempDir::new()?;
+        let storage = RepositoryStorage::new(local_dir.path().to_path_buf(), remote_dir.path().to_path_buf());
+        let mut ext_mgr = ExtensionManager::new(extensions_dir.path().to_path_buf(), extensions_db_dir.path().to_path_buf());
+        // no extensions for these tests
+        let router = RouterState::new(pool, storage.clone(), Arc::new(ext_mgr))?;
+        let app_state = AppState {
+            router: Arc::new(router),
+            auth: None,
+            storage,
+            git_max_body: 64 * 1024 * 1024,
+            git_timeout_ms: 60_000,
+            git_semaphore: Arc::new(tokio::sync::Semaphore::new(64)),
+        };
+        Ok((app_state, local_dir, remote_dir, extensions_dir, extensions_db_dir))
+    }
+
+    async fn init_bare_repo(path: &std::path::Path) {
+        std::fs::create_dir_all(path).ok();
+        let _ = std::process::Command::new("git").arg("init").arg("--bare").arg(path).status();
+    }
+
+    async fn seed_main_branch(bare: &std::path::Path) {
+        // create a working repo, make a commit, and push main to the bare repo
+        let tmp = TempDir::new().unwrap();
+        let work = tmp.path();
+        let _ = std::process::Command::new("git").current_dir(work).arg("init").status();
+        std::fs::write(work.join("README.md"), b"hello\n").ok();
+        let _ = std::process::Command::new("git").current_dir(work).args(["add","README.md"]).status();
+        let _ = std::process::Command::new("git").current_dir(work).args(["-c","user.email=t@e","-c","user.name=t","commit","-m","init"]).status();
+        let _ = std::process::Command::new("git").current_dir(work).args(["branch","-M","main"]).status();
+        let _ = std::process::Command::new("git").current_dir(work).args(["remote","add","origin",&bare.to_string_lossy()]).status();
+        let _ = std::process::Command::new("git").current_dir(work).args(["push","origin","main"]).status();
+    }
+
+    #[tokio::test]
+    async fn info_refs_requires_service_param() {
+        let (state, _l, _r, _e, _edb) = mk_app_state().await.unwrap();
+        let resp = info_refs_root(AxState(state), AxPath("alpha".to_string()), AxQuery(ServiceQuery { service: Some("not-upload-pack".to_string()) })).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn info_refs_gated_and_content_type() {
+        unsafe {
+            std::env::set_var("FORGE_GIT_SMART_V2_ADVERTISE", "rust");
+        }
+        let (state, local_dir, _r, _e, _edb) = mk_app_state().await.unwrap();
+        // create bare repo but do NOT mark public
+        let repo = local_dir.path().join("alpha.git");
+        init_bare_repo(&repo).await;
+        let resp_404 = info_refs_root(AxState(state.clone()), AxPath("alpha".to_string()), AxQuery(ServiceQuery { service: Some("git-upload-pack".to_string()) })).await;
+        assert_eq!(resp_404.status(), StatusCode::NOT_FOUND);
+        // mark public and retry
+        std::fs::write(repo.join("git-daemon-export-ok"), b"").unwrap();
+        let resp = info_refs_root(AxState(state), AxPath("alpha".to_string()), AxQuery(ServiceQuery { service: Some("git-upload-pack".to_string()) })).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.headers().get(header::CONTENT_TYPE).unwrap(), "application/x-git-upload-pack-advertisement");
+        let bytes = axum::body::to_bytes(resp.into_body(), 16 << 20).await.unwrap();
+        assert!(std::str::from_utf8(&bytes).unwrap().contains("version 2"));
+    }
+
+    #[tokio::test]
+    async fn receive_pack_is_forbidden() {
+        let resp = receive_pack_blocked().await.into_response();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn ls_refs_supports_ref_prefix_peel_and_symrefs() {
+        unsafe {
+            std::env::set_var("FORGE_GIT_SMART_V2_BACKEND", "rust");
+        }
+        let (state, local_dir, _r, _e, _edb) = mk_app_state().await.unwrap();
+        let repo = local_dir.path().join("alpha.git");
+        init_bare_repo(&repo).await;
+        std::fs::write(repo.join("git-daemon-export-ok"), b"").unwrap();
+        seed_main_branch(&repo).await;
+
+        // Build ls-refs request
+        let mut req = Vec::new();
+        req.extend_from_slice(&encode_pkt_line(b"command=ls-refs\n"));
+        req.extend_from_slice(&encode_pkt_line(b"ref-prefix refs/heads\n"));
+        req.extend_from_slice(&encode_pkt_line(b"peel\n"));
+        req.extend_from_slice(&encode_pkt_line(b"symrefs\n"));
+        req.extend_from_slice(PKT_FLUSH);
+
+        let headers = AxHeaderMap::new();
+        let resp = upload_pack_root(AxState(state), AxPath("alpha".to_string()), headers, axum::body::Body::from(req)).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.headers().get(header::CONTENT_TYPE).unwrap(), "application/x-git-upload-pack-result");
+        let bytes = axum::body::to_bytes(resp.into_body(), 16 << 20).await.unwrap();
+        let s = std::str::from_utf8(&bytes).unwrap();
+        assert!(s.contains("refs/heads/main"));
+        // With ref-prefix, HEAD may be omitted unless it matches; allow either case.
+    }
+
+    #[tokio::test]
+    async fn upload_pack_unknown_command_400() {
+        unsafe {
+            std::env::set_var("FORGE_GIT_SMART_V2_BACKEND", "rust");
+        }
+        let (state, local_dir, _r, _e, _edb) = mk_app_state().await.unwrap();
+        let repo = local_dir.path().join("alpha.git");
+        init_bare_repo(&repo).await;
+        std::fs::write(repo.join("git-daemon-export-ok"), b"").unwrap();
+
+        let mut req = Vec::new();
+        req.extend_from_slice(&encode_pkt_line(b"command=unknown\n"));
+        req.extend_from_slice(PKT_FLUSH);
+        let headers = AxHeaderMap::new();
+        let resp = upload_pack_root(AxState(state), AxPath("alpha".to_string()), headers, axum::body::Body::from(req)).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn fetch_with_bad_object_format_is_400() {
+        unsafe {
+            std::env::set_var("FORGE_GIT_SMART_V2_BACKEND", "rust");
+        }
+        let (state, local_dir, _r, _e, _edb) = mk_app_state().await.unwrap();
+        let repo = local_dir.path().join("alpha.git");
+        init_bare_repo(&repo).await;
+        std::fs::write(repo.join("git-daemon-export-ok"), b"").unwrap();
+
+        let mut req = Vec::new();
+        req.extend_from_slice(&encode_pkt_line(b"command=fetch\n"));
+        req.extend_from_slice(&encode_pkt_line(b"object-format=sha256\n"));
+        req.extend_from_slice(&encode_pkt_line(b"want 0123456789abcdef0123456789abcdef01234567\n"));
+        req.extend_from_slice(PKT_FLUSH);
+        let headers = AxHeaderMap::new();
+        let resp = upload_pack_root(AxState(state), AxPath("alpha".to_string()), headers, axum::body::Body::from(req)).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 }

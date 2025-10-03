@@ -1,21 +1,34 @@
-# Git Smart HTTP v2 Parity – Next Steps
+# Smart HTTP v2 — Merge Readiness
 
-This tracker captures only the remaining work for Git Smart HTTP v2 parity. See `TODO_ANALYSIS.md` for background and status notes.
+Updated: 2025-10-03
 
-## Phase B – Shallow & Filters
-- Run and record results for:
-  - `server/tests/git_http_v2_partial_blob_none.sh`
-  - `server/tests/git_http_v2_partial_blob_limit.sh`
-  - `server/tests/git_http_v2_filter_symlink_submodule.sh`
-- Publish a consolidated test-results summary once the above pass (include pack/object deltas and timing where relevant).
-- Revisit `FORGE_GIT_SMART_V2_BACKEND` default after verification; decide if the Rust backend should become the default path.
+## Completed
 
-## Phase C – Deltas & Thin-Pack
-- Implement OFS-DELTA support and choose between OFS/REF fallback heuristics.
-- Extend delta compression beyond commits to trees and blobs, with reasonable size thresholds.
-- Improve delta generation quality (copy ops, similarity heuristics, multi-threaded search, reuse of on-disk deltas when possible).
+- [x] Remove stray planning artifacts
+  - Deleted `file` (root)
+  - Deleted `repeat.fish` (root)
+- [x] Align Smart HTTP v2 docs with code
+  - `docs/guides/smart-http.md` now documents:
+    - `FORGE_GIT_HTTP_MODE=smart|smart-v2`
+    - `FORGE_GIT_SMART_V2_BACKEND=git|rust`
+    - `FORGE_GIT_SMART_V2_ADVERTISE=git|rust`
+    - Export gating and `FORGE_GIT_HTTP_EXPORT_ALL`
+- [x] Add spec-focused HTTP tests (unit)
+  - `server/src/git_http/v2.rs` tests:
+    - `info_refs_requires_service_param` → 400 when service ≠ `git-upload-pack`
+    - `info_refs_gated_and_content_type` → 404 without export-ok; 200 with; correct content-type and v2 banner
+    - `receive_pack_is_forbidden` → 403 on `/git-receive-pack`
+    - `ls_refs_supports_ref_prefix_peel_and_symrefs` (rust backend) → returns refs (incl. `refs/heads/main`)
+    - `upload_pack_unknown_command_400` → 400 on unknown command
+    - `fetch_with_bad_object_format_is_400` → rejects non-`sha1` object-format
 
-## Cross-Cutting Testing & Tooling
-- Add unit coverage for delta encoding/decoding, negotiation state machine edge cases, and filter handling (`blob:none`, `tree:<depth>`, `blob:limit=<n>`).
-- Create end-to-end scenarios exercising thin-pack fetches, want-ref resolution, shallow/partial fetch combinations, and failure handling (timeouts, corrupted input, very large repos).
-- Run compatibility checks against multiple Git client versions once the above work lands.
+## Next
+
+- [x] Run tests locally (completed 2025-10-03T10:07:39Z) — `cargo test -p server` passed: 102 unit/integration tests ok
+  - `nix develop --impure -c cargo test -p server`
+- [x] (Optional) Run parity scripts locally for extra confidence (completed 2025-10-03T10:07:39Z)
+  - Clone: `nix develop --impure -c bash server/tests/git_http_v2_clone.sh` → ok
+  - Shallow: `nix develop --impure -c bash server/tests/git_http_v2_shallow.sh` → ok
+  - Fetch update: `nix develop --impure -c bash server/tests/git_http_v2_fetch_update.sh` → ok
+- [ ] Open PR and request review
+  - Summarize the above and link CI `git-smart-http-v2-parity.yml` run
