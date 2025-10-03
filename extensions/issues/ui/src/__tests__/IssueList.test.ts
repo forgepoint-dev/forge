@@ -17,10 +17,9 @@ describe('IssueList.vue', () => {
 	});
 
 	it('renders loading state initially', () => {
-		getIssuesForRepositoryMock.mockReturnValue(new Promise(() => {}));
-
 		const wrapper = mount(IssueList, {
 			props: { repositoryId: 'repo-1' },
+			global: { stubs: [] },
 		});
 
 		expect(wrapper.text()).toContain('Loading');

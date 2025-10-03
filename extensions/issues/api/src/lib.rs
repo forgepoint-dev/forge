@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 wit_bindgen::generate!({
     world: "extension",
-    path: "../../../packages/wit",
+    path: "../../../packages/wit/extension.wit",
 });
 
 use exports::forge::extension::extension_api::{

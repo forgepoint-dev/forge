@@ -6,6 +6,7 @@
 /node_modules/
 .devenv/
 .DS_Store
+git
 
 # SQLite database files
 *.db

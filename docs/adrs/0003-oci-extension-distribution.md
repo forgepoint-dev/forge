@@ -260,7 +260,7 @@ Cons:
 
 ### Phase 1: Configuration Infrastructure
 - Add `ron` crate dependency
-- Create `server/src/config/` module
+- Create `crates/server/src/config/` module
 - Implement config types with `serde`
 - Config file loader with defaults
 

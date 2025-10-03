@@ -1,0 +1,55 @@
+[package]
+name = "server"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+test-support = []
+
+[dependencies]
+hive-router-query-planner = "1.0.0"
+hive-router-plan-executor = "1.0.4"
+graphql-tools = "0.4.0"
+graphql-parser = "0.4.1"
+axum = "0.8"
+tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread", "net", "io-util", "time", "fs"] }
+tokio-util = "0.7"
+futures = "0.3"
+anyhow = "1"
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "macros"] }
+cuid2 = "0.1"
+tower-http = { version = "0.5", features = ["cors"] }
+url = "2"
+gix = { version = "0.73.0", features = ["blocking-http-transport-reqwest-rust-tls"] }
+wasmtime = { version = "33", features = ["component-model"] }
+wasmtime-wasi = "33"
+cap-std = "3"
+wit-bindgen = { version = "0.32", default-features = false, features = ["macros"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sonic-rs = "0.5"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+async-graphql-parser = "7"
+metrics = "0.23"
+async-trait = "0.1"
+base64 = "0.22"
+ron = "0.8"
+git-http = { path = "../git-http" }
+oci-distribution = "0.11"
+sha2 = "0.10"
+bytes = "1"
+pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
+oauth2 = "4"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+jsonwebtoken = "9"
+hmac = "0.12"
+rand = "0.8"
+urlencoding = "2"
+ring = "0.17"
+p256 = { version = "0.13", features = ["pkcs8"] }
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3.0"
+wat = "1.0"

@@ -48,7 +48,7 @@ serde_json = "1.0"
 package = "forgepoint:extension"
 
 [package.metadata.component.target]
-path = "../../wit/extension.wit"
+path = "../../../packages/wit/extension.wit"
 ```
 
 ### Step 3: Implement the Extension
@@ -60,7 +60,7 @@ use wit_bindgen::generate;
 
 // Generate bindings from the WIT interface
 generate!({
-    path: "../../wit/extension.wit",
+    path: "../../../packages/wit/extension.wit",
     world: "extension",
 });
 

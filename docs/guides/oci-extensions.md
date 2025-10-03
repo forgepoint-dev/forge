@@ -74,7 +74,7 @@ Forge searches for configuration in the following order:
 2. `forge.ron` in the current directory
 3. `.forge/config.ron`
 
-If no configuration is found, Forge falls back to scanning the `server/extensions/` directory for `.wasm` files.
+If no configuration is found, Forge falls back to scanning the `crates/server/extensions/` directory for `.wasm` files.
 
 ### OCI Extension Configuration
 
@@ -269,7 +269,7 @@ du -sh .forge/extensions/cache/
 ### 1. Build WASM Extension
 
 ```bash
-cd server/extensions/your-extension
+cd crates/server/extensions/your-extension
 cargo build --target wasm32-wasip1 --release
 ```
 
