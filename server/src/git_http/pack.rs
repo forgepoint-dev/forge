@@ -34,7 +34,7 @@ struct PackPlan {
 ///
 /// Response section framing (protocol v2):
 /// - optional "acknowledgments" section (ACK/NAK) if client sent `have` lines, then a pkt-delim (0001)
-/// - optional "shallow-info" section if deepen/filter imply shallows, then a pkt-delim (0001)
+/// - optional "shallow-info" section if deepen/filter imply shallows, then a pkt-delim (0001).
 /// - required  "packfile" section header followed by sideband(1) framed pack bytes; final pkt-flush (0000)
 pub async fn serve_fetch(repo_dir: &PathBuf, req: &FetchRequest, _headers: &HeaderMap, _body_limit: usize) -> Response {
     // Channel to stream pkt-line framed bytes out to the client
@@ -48,19 +48,54 @@ pub async fn serve_fetch(repo_dir: &PathBuf, req: &FetchRequest, _headers: &Head
         }
     }
 
-    // If client sent haves, emit an acknowledgments section.
-    if req_effective.has_haves() {
+    // If client sent haves and did not also send 'done', emit an acknowledgments section.
+    // Per protocol v2, if the client sends 'done', the acknowledgments section MUST be omitted.
+    tracing::info!(has_haves = %req_effective.has_haves(), done = %req_effective.done(), "fetch negotiation flags");
+    let mut ack_ready = true;
+    if req_effective.has_haves() && !req_effective.done() {
         let _ = tx.send(Bytes::from(encode_pkt_line(b"acknowledgments\n"))).await;
         // Compute simple ACK set by intersecting haves with reachable commits from wants.
-        if let Err(e) = emit_acknowledgments(repo_dir, &req_effective, &tx).await {
-            tracing::debug!("acknowledgments generation failed: {}", e);
-            // As a fallback, emit a NAK so the client proceeds.
-            let _ = tx.send(Bytes::from(encode_pkt_line(b"NAK\n"))).await;
+        match emit_acknowledgments(repo_dir, &req_effective, &tx).await {
+            Ok(rdy) => { ack_ready = rdy; }
+            Err(e) => {
+                tracing::debug!("acknowledgments generation failed: {}", e);
+                // As a fallback, emit a NAK so the client proceeds.
+                let _ = tx.send(Bytes::from(encode_pkt_line(b"NAK\n"))).await;
+                ack_ready = false;
+            }
         }
-        let _ = tx.send(Bytes::from_static(PKT_DELIM)).await; // section delimiter
+        tracing::info!(ack_ready = ack_ready, "acknowledgments section done");
+        if ack_ready {
+            // When we send 'ready', we should NOT send any other sections according to the protocol
+            // The client expects the response to end after the 'ready' ACK
+            // Send flush to end the response immediately, not a section delimiter
+            let _ = tx.send(Bytes::from_static(PKT_FLUSH)).await;
+            let stream = ReceiverStream::new(rx).map(Ok::<Bytes, std::convert::Infallible>);
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "application/x-git-upload-pack-result")
+                .header(header::CACHE_CONTROL, "no-cache")
+                .header(header::PRAGMA, "no-cache")
+                .body(Body::from_stream(stream))
+                .expect("response");
+        } else {
+            // Per protocol v2: without 'ready', end response with FLUSH and do not send packfile
+            // Send section delimiter and then flush
+            let _ = tx.send(Bytes::from_static(PKT_DELIM)).await;
+            let _ = tx.send(Bytes::from_static(PKT_FLUSH)).await;
+            let stream = ReceiverStream::new(rx).map(Ok::<Bytes, std::convert::Infallible>);
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "application/x-git-upload-pack-result")
+                .header(header::CACHE_CONTROL, "no-cache")
+                .header(header::PRAGMA, "no-cache")
+                .body(Body::from_stream(stream))
+                .expect("response");
+        }
     }
 
     // Compute traversal plan (objects + shallow boundaries)
+    // This is now executed for all cases including when ack_ready is true
     let repo_path_for_plan = repo_dir.clone();
     let req_for_plan = req_effective.clone();
     let plan = match tokio::task::spawn_blocking(move || plan_pack(repo_path_for_plan, &req_for_plan)).await {
@@ -74,6 +109,7 @@ pub async fn serve_fetch(repo_dir: &PathBuf, req: &FetchRequest, _headers: &Head
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, "application/x-git-upload-pack-result")
                 .header(header::CACHE_CONTROL, "no-cache")
+                .header(header::PRAGMA, "no-cache")
                 .body(Body::from(body))
                 .unwrap();
         }
@@ -86,12 +122,14 @@ pub async fn serve_fetch(repo_dir: &PathBuf, req: &FetchRequest, _headers: &Head
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, "application/x-git-upload-pack-result")
                 .header(header::CACHE_CONTROL, "no-cache")
+                .header(header::PRAGMA, "no-cache")
                 .body(Body::from(body))
                 .unwrap();
         }
     };
 
     // Optional shallow-info section if client requested shallow/deepen semantics.
+    // When ack_ready is true, we skip this section entirely
     if req_effective.shallow_requested() {
         let _ = tx.send(Bytes::from(encode_pkt_line(b"shallow-info\n"))).await;
         // New shallow tips after this fetch
@@ -112,25 +150,32 @@ pub async fn serve_fetch(repo_dir: &PathBuf, req: &FetchRequest, _headers: &Head
     }
 
     // Start the packfile section
+    tracing::info!("sending packfile header");
     let _ = tx.send(Bytes::from(encode_pkt_line(b"packfile\n"))).await;
 
     let repo_path = repo_dir.clone();
-    let sideband_64k = req_effective.side_band_64k();
+    // In protocol v2 over HTTP, packfile bytes are sent using side-band-64k framing.
+    // Always enable sideband to match git-http-backend behavior and client expectations.
+    let sideband_64k = true;
     let req_clone = req_effective.clone();
     let plan_clone = plan.clone();
 
     // Spawn blocking task to build and stream the packfile
-    tokio::task::spawn_blocking(move || {
+    let pack_task = tokio::task::spawn_blocking(move || {
         if let Err(err) = build_and_stream_pack_with_plan(repo_path, &req_clone, sideband_64k, plan_clone, tx) {
             tracing::warn!("pack streaming failed: {}", err);
         }
     });
+
+    // Wait for the packfile streaming to complete before returning the response
+    let _ = pack_task.await;
 
     let stream = ReceiverStream::new(rx).map(Ok::<Bytes, std::convert::Infallible>);
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/x-git-upload-pack-result")
         .header(header::CACHE_CONTROL, "no-cache")
+        .header(header::PRAGMA, "no-cache")
         .body(Body::from_stream(stream))
         .expect("response")
 }
@@ -292,24 +337,9 @@ fn build_and_stream_pack(
     }
 
     for id in &commits {
-        let mut wrote_delta = false;
-        if req.thin_pack() {
-            if let Ok(obj) = repo.find_object(*id) {
-                if obj.kind == gix::objs::Kind::Commit {
-                    if let Ok((_, parents)) = parse_commit_raw(obj.data.as_ref()) {
-                        if let Some(base) = parents.into_iter().find(|p| have_set.contains(p)) {
-                            match write_commit_ref_delta(&repo, &mut out, &mut hasher, (*id).into(), base) {
-                                Ok(_) => wrote_delta = true,
-                                Err(e) => tracing::debug!("ref-delta emit failed for {}: {}", id, e),
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if !wrote_delta {
-            write_full_object(&repo, &mut out, &mut hasher, (*id).into())?;
-        }
+        // For correctness first: emit full objects even if the client requested thin-pack.
+        // Proper delta encoding (copy/insert ops) can be added later.
+        write_full_object(&repo, &mut out, &mut hasher, (*id).into())?;
     }
 
     for id in &seen_tree {
@@ -590,6 +620,65 @@ fn plan_pack(repo_dir: PathBuf, req: &FetchRequest) -> anyhow::Result<PackPlan> 
     })
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::git_http::pkt::{decode_pkt_lines, Pkt};
+
+    #[test]
+    fn encode_obj_header_small_sizes() {
+        // kind=commit(1), size=0 -> 0x10
+        assert_eq!(encode_obj_header(1, 0), vec![0x10]);
+        // size=15 -> lower 4 bits set, no continuation
+        assert_eq!(encode_obj_header(1, 15), vec![0x1f]);
+    }
+
+    #[test]
+    fn encode_obj_header_multibyte() {
+        // size=16 -> continuation in first byte, then 0x01
+        assert_eq!(encode_obj_header(1, 16), vec![0x90, 0x01]);
+        // size spans multiple varint bytes
+        let v = encode_obj_header(3, 0x1fff); // blob, 8191
+        // First byte: kind=3 (0x30) | size low 4 bits (0x0f) | cont (0x80) = 0xbf
+        assert_eq!(v[0], 0xbf);
+        assert!(v.len() >= 2);
+    }
+
+    #[test]
+    fn sideband_pkt_writer_frames_data_and_progress() {
+        let (tx, mut rx) = mpsc::channel::<Bytes>(4);
+        let mut w = SidebandPktWriter::new(tx, true, false);
+        // Send a small chunk; expect one pkt with band=1 and payload 'abc'
+        w.send_chunk(b"abc").unwrap();
+        // Progress line should be band=2 and newline-terminated
+        w.progress_line("Counting objects".to_string()).unwrap();
+        // Drain two messages
+        let first = rx.try_recv().expect("first pkt");
+        let pkts = decode_pkt_lines(&first).unwrap();
+        match &pkts[0] { Pkt::Data(d) => { assert_eq!(d[0], 1); assert_eq!(&d[1..], b"abc"); }, _ => panic!("expected data pkt") }
+
+        let second = rx.try_recv().expect("second pkt");
+        let pkts2 = decode_pkt_lines(&second).unwrap();
+        match &pkts2[0] { Pkt::Data(d) => { assert_eq!(d[0], 2); assert!(std::str::from_utf8(&d[1..]).unwrap().starts_with("Counting objects")); }, _ => panic!("expected progress pkt") }
+    }
+
+    #[test]
+    fn sideband_pkt_writer_respects_no_sideband_or_no_progress() {
+        // No sideband: raw bytes, not pkt-framed
+        let (tx, mut rx) = mpsc::channel::<Bytes>(1);
+        let mut w = SidebandPktWriter::new(tx, false, false);
+        w.send_chunk(b"PACK").unwrap();
+        let raw = rx.try_recv().unwrap();
+        assert_eq!(&raw[..], b"PACK");
+
+        // Suppress progress
+        let (tx2, mut rx2) = mpsc::channel::<Bytes>(1);
+        let mut w2 = SidebandPktWriter::new(tx2, true, true);
+        w2.progress_line("message".to_string()).unwrap();
+        assert!(rx2.try_recv().is_err());
+    }
+}
+
 fn build_and_stream_pack_with_plan(
     repo_dir: PathBuf,
     req: &FetchRequest,
@@ -603,19 +692,13 @@ fn build_and_stream_pack_with_plan(
     let start = std::time::Instant::now();
     let mut hasher = sha1::Sha1::new();
 
-    let total_objects = (plan.commits.len() + plan.trees.len() + plan.blobs.len()) as u32;
-    if sideband_64k && !req.no_progress() {
-        let _ = out.progress_line(format!("Enumerating objects: {}", total_objects));
-        if req.filter_requested() {
-            let _ = out.progress_line("Filter requested; sending full objects".to_string());
-        }
-    }
-
     // Pack header
     let mut header = Vec::with_capacity(12);
     header.extend_from_slice(b"PACK");
     header.extend_from_slice(&2u32.to_be_bytes());
-    header.extend_from_slice(&total_objects.to_be_bytes());
+    header.extend_from_slice(&(
+        (plan.commits.len() + plan.trees.len() + plan.blobs.len()) as u32
+    ).to_be_bytes());
     hasher.update(&header);
     out.send_chunk(&header)?;
 
@@ -649,7 +732,7 @@ fn build_and_stream_pack_with_plan(
         let _ = out.progress_line("Done".to_string());
     }
 
-    counter!("git_http.pack.objects").increment(total_objects as u64);
+    counter!("git_http.pack.objects").increment((plan.commits.len() + plan.trees.len() + plan.blobs.len()) as u64);
     histogram!("git_http.pack.logical_bytes").record(0.0);
     histogram!("git_http.pack.build_ms").record(start.elapsed().as_millis() as f64);
 
@@ -657,7 +740,8 @@ fn build_and_stream_pack_with_plan(
     Ok(())
 }
 
-async fn emit_acknowledgments(repo_dir: &PathBuf, req: &FetchRequest, tx: &mpsc::Sender<Bytes>) -> anyhow::Result<()> {
+// Returns true if an 'ACK <oid> ready' was emitted, false otherwise
+async fn emit_acknowledgments(repo_dir: &PathBuf, req: &FetchRequest, tx: &mpsc::Sender<Bytes>) -> anyhow::Result<bool> {
     use gix::prelude::*;
     let repo = gix::open(repo_dir)?;
     // Build a reachable set from wants (commits only)
@@ -686,7 +770,7 @@ async fn emit_acknowledgments(repo_dir: &PathBuf, req: &FetchRequest, tx: &mpsc:
     if common.is_empty() {
         // No common base found; reply with NAK per v2 semantics
         let _ = tx.send(Bytes::from(encode_pkt_line(b"NAK\n"))).await;
-        return Ok(());
+        return Ok(false);
     }
     for c in &common {
         let line = format!("ACK {} common\n", c);
@@ -696,7 +780,7 @@ async fn emit_acknowledgments(repo_dir: &PathBuf, req: &FetchRequest, tx: &mpsc:
     let ready_id = common.last().cloned().unwrap();
     let line = format!("ACK {} ready\n", ready_id);
     let _ = tx.send(Bytes::from(encode_pkt_line(line.as_bytes()))).await;
-    Ok(())
+    Ok(true)
 }
 
 async fn resolve_want_refs(repo_dir: &PathBuf, req: &mut FetchRequest) -> anyhow::Result<()> {
@@ -712,7 +796,7 @@ async fn resolve_want_refs(repo_dir: &PathBuf, req: &mut FetchRequest) -> anyhow
             }
         }
     }
-    // Fix: Actually mutate the request's wants vector
-    req.wants.extend(new_wants);
+    // Fix: Actually mutate the request's wants vector via public API
+    req.extend_wants(new_wants);
     Ok(())
 }
