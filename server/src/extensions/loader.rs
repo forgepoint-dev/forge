@@ -200,7 +200,10 @@ fn validate_module_imports(module: &Module) -> Result<()> {
                     import.name()
                 ));
             }
-            ExternType::Memory(_) | ExternType::Table(_) | ExternType::Global(_) | ExternType::Tag(_) => {
+            ExternType::Memory(_)
+            | ExternType::Table(_)
+            | ExternType::Global(_)
+            | ExternType::Tag(_) => {
                 // These are generally safe
                 continue;
             }

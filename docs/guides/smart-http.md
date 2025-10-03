@@ -45,6 +45,12 @@ Unit tests cover pkt-line encode/decode and fetch parser.
 2. Add have negotiation for minimal packs.
 3. Support shallow clones and (optionally) partial clone filters.
 
+## Negotiation Semantics
+
+- The pure-Rust backend emits protocol v2 `acknowledgments` sections whenever the client sends `have` lines. We intersect the client's haves with the commit graph reachable from its wants, reply with `ACK <oid> common` for each shared commit, and finish with a single `ACK <oid> ready` once a cut point is found so the client can proceed straight to the packfile.
+- If the client shares no common commits we return `NAK` instead, allowing it to fall back to a full fetch. We always send a pkt-line delimiter after the section to match the protocol framing described in `gitprotocol-v2`.
+- Protocol v2 no longer negotiates the `multi_ack` / `multi_ack_detailed` capability used by protocol v0; instead, the dedicated `acknowledgments` section conveys the same information. Because every modern Git client speaking v2 already understands the `ready` marker, we intentionally skip advertising or emulating v0-style multi-ACK behaviour. If we ever need to support legacy clients that are pinned to v0, that work belongs in a separate compatibility shim rather than the v2 backend.
+
 ## Security and Limits
 
 - Public gating: create `git-daemon-export-ok` in a repo to allow anonymous HTTP. Or set `FORGE_GIT_HTTP_EXPORT_ALL=true` to allow all (not recommended for multi-tenant).

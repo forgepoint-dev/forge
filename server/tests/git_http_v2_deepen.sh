@@ -9,31 +9,66 @@ EXT_DIR="$ROOT_DIR/extensions"
 PORT=${PORT:-$(( ( RANDOM % 10000 ) + 30000 ))}
 SERVER_URL=${SERVER_URL:-http://127.0.0.1:$PORT}
 REPO_NAME=${REPO_NAME:-alpha}
+SERVER_LOG=${SERVER_LOG:-$(mktemp /tmp/forge-server.XXXXXX.log)}
+HEALTH_ATTEMPTS=${SERVER_HEALTH_ATTEMPTS:-300}
+HEALTH_INTERVAL=${SERVER_HEALTH_INTERVAL:-0.2}
 
 cleanup() {
-  if [[ -n "${SERVER_PID:-}" ]]; then kill "$SERVER_PID" 2>/dev/null || true; fi
+  if [[ -n "${SERVER_PID:-}" ]]; then
+    if kill -0 "$SERVER_PID" 2>/dev/null; then
+      kill "$SERVER_PID" 2>/dev/null || true
+    fi
+    wait "$SERVER_PID" 2>/dev/null || true
+  fi
   rm -rf "$DB_DIR" "$REPOS_DIR" >/dev/null 2>&1 || true
+  if [[ -z "${KEEP_SERVER_LOG:-}" ]]; then
+    rm -f "$SERVER_LOG" >/dev/null 2>&1 || true
+  fi
 }
 trap cleanup EXIT
 
-# Start server with Rust backend
-(
-  cd "$ROOT_DIR"/..
-  FORGE_DB_PATH="$DB_DIR" \
-  FORGE_REPOS_PATH="$REPOS_DIR" \
-  FORGE_EXTENSIONS_DIR="$EXT_DIR" \
-  FORGE_GIT_HTTP_MODE=smart \
-  FORGE_GIT_HTTP_EXPORT_ALL=true \
-  FORGE_GIT_SMART_V2_BACKEND=rust \
-  FORGE_LISTEN_ADDR="127.0.0.1:$PORT" \
-  cargo run --manifest-path server/Cargo.toml --bin server >/tmp/forge-server.log 2>&1 &
-  SERVER_PID=$!
-)
+# Start server with Rust backend via nix develop for consistent tooling
+start_server() {
+  local pidfile
+  pidfile=$(mktemp)
+  (
+    cd "$ROOT_DIR"/..
+    FORGE_DB_PATH="$DB_DIR" \
+    FORGE_REPOS_PATH="$REPOS_DIR" \
+    FORGE_EXTENSIONS_DIR="$EXT_DIR" \
+    FORGE_GIT_HTTP_MODE=smart \
+    FORGE_GIT_HTTP_EXPORT_ALL=true \
+    FORGE_GIT_SMART_V2_BACKEND=rust \
+    FORGE_LISTEN_ADDR="127.0.0.1:$PORT" \
+    nix develop --impure -c cargo run --manifest-path server/Cargo.toml --bin server \
+      >"$SERVER_LOG" 2>&1 &
+    echo $! >"$pidfile"
+  )
+  SERVER_PID=$(cat "$pidfile")
+  rm -f "$pidfile"
+}
 
-for i in {1..60}; do
-  if curl -s "$SERVER_URL/healthz" >/dev/null 2>&1; then break; fi
-  sleep 0.2
-done
+wait_for_server() {
+  local attempt=1
+  while (( attempt <= HEALTH_ATTEMPTS )); do
+    if curl -fsS "$SERVER_URL/healthz" >/dev/null 2>&1; then
+      return 0
+    fi
+    if [[ -n "${SERVER_PID:-}" ]] && ! kill -0 "$SERVER_PID" 2>/dev/null; then
+      echo "forge server exited before becoming healthy" >&2
+      tail -n 200 "$SERVER_LOG" >&2 || true
+      return 1
+    fi
+    sleep "$HEALTH_INTERVAL"
+    attempt=$(( attempt + 1 ))
+  done
+  echo "forge server failed to report healthy after $HEALTH_ATTEMPTS attempts" >&2
+  tail -n 200 "$SERVER_LOG" >&2 || true
+  return 1
+}
+
+start_server
+wait_for_server
 
 # Create a repo with a few commits
 mkdir -p "$REPOS_DIR/$REPO_NAME.git"

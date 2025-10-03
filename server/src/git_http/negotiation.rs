@@ -6,4 +6,3 @@ pub struct Capabilities {
     pub ofs_delta: bool,
     pub side_band_64k: bool,
 }
-

@@ -14,6 +14,16 @@ use std::time::Instant;
 #[derive(Debug, Deserialize)]
 pub struct ServiceQuery { pub service: Option<String> }
 
+enum AdvertiseMode { Git, Rust }
+
+fn select_advertise_mode() -> AdvertiseMode {
+    match std::env::var("FORGE_GIT_SMART_V2_ADVERTISE").ok().as_deref() {
+        Some("rust") => AdvertiseMode::Rust,
+        Some("git") => AdvertiseMode::Git,
+        _ => AdvertiseMode::Git,
+    }
+}
+
 // GET /:repo(.git)?/info/refs?service=git-upload-pack
 pub async fn info_refs_root(
     State(state): State<AppState>,
@@ -29,9 +39,9 @@ pub async fn info_refs_root(
     let repo_dir = match resolve_repo_dir(&state.storage, &segments) { Ok(p) => p, Err(e) => { tracing::debug!("resolve_repo_dir failed: {}", e); return (StatusCode::NOT_FOUND, "repo not found").into_response() } };
     if !is_public_repo(&repo_dir) { tracing::debug!("repo not public: {}", repo_dir.display()); return (StatusCode::NOT_FOUND, "repo not found").into_response(); }
 
-    let resp = match std::env::var("FORGE_GIT_SMART_V2_ADVERTISE").ok().as_deref() {
-        Some("rust") => advertise_v2_rust(&state, &segments, &HeaderMap::new()).await,
-        _ => advertise_v2_via_git(&state, &segments, &HeaderMap::new()).await,
+    let resp = match select_advertise_mode() {
+        AdvertiseMode::Rust => advertise_v2_rust(&state, &segments, &HeaderMap::new()).await,
+        AdvertiseMode::Git => advertise_v2_via_git(&state, &segments, &HeaderMap::new()).await,
     };
     counter!("git_http.info_refs", "scope" => "root").increment(1);
     histogram!("git_http.info_refs_ms").record(start.elapsed().as_millis() as f64);
@@ -52,9 +62,9 @@ pub async fn info_refs_group(
     let repo_dir = match resolve_repo_dir(&state.storage, &segments) { Ok(p) => p, Err(e) => { tracing::debug!("resolve_repo_dir failed: {}", e); return (StatusCode::NOT_FOUND, "repo not found").into_response() } };
     if !is_public_repo(&repo_dir) { tracing::debug!("repo not public: {}", repo_dir.display()); return (StatusCode::NOT_FOUND, "repo not found").into_response(); }
 
-    let resp = match std::env::var("FORGE_GIT_SMART_V2_ADVERTISE").ok().as_deref() {
-        Some("rust") => advertise_v2_rust(&state, &segments, &HeaderMap::new()).await,
-        _ => advertise_v2_via_git(&state, &segments, &HeaderMap::new()).await,
+    let resp = match select_advertise_mode() {
+        AdvertiseMode::Rust => advertise_v2_rust(&state, &segments, &HeaderMap::new()).await,
+        AdvertiseMode::Git => advertise_v2_via_git(&state, &segments, &HeaderMap::new()).await,
     };
     counter!("git_http.info_refs", "scope" => "group").increment(1);
     histogram!("git_http.info_refs_ms").record(start.elapsed().as_millis() as f64);
@@ -135,19 +145,56 @@ async fn advertise_v2_via_git(state: &AppState, segments: &[String], headers: &H
     } else {
         cmd.env("GIT_PROTOCOL", "version=2");
     }
-    match cmd.spawn() {
-        Ok(mut child) => {
-            if let Some(stdout) = child.stdout.take() {
-                let stream = ReaderStream::new(stdout);
-                return Response::builder()
-                    .status(StatusCode::OK)
-                    .header(header::CONTENT_TYPE, "application/x-git-upload-pack-advertisement")
-                    .header(header::CACHE_CONTROL, "no-cache")
-                    .body(axum::body::Body::from_stream(stream))
-                    .expect("response build");
+    match cmd.output().await {
+        Ok(output) if output.status.success() => {
+            let mut body = output.stdout;
+            let mut cursor = 0usize;
+            let mut patched = false;
+            while cursor + 4 <= body.len() {
+                let len_bytes = &body[cursor..cursor + 4];
+                let len = match usize::from_str_radix(std::str::from_utf8(len_bytes).unwrap_or(""), 16) {
+                    Ok(v) => v,
+                    Err(_) => break,
+                };
+                cursor += 4;
+                if len == 0 { break; }
+                if len == 1 { continue; }
+                if cursor + (len - 4) > body.len() { break; }
+                let data_end = cursor + (len - 4);
+                let data = &body[cursor..data_end];
+                if data.starts_with(b"fetch=") && !data.windows(b"filter".len()).any(|w| w == b"filter") {
+                    let mut line = data.to_vec();
+                    if line.ends_with(b"\n") {
+                        line.pop();
+                        line.extend_from_slice(b" filter\n");
+                    } else {
+                        line.extend_from_slice(b" filter");
+                    }
+                    let mut patched_body = Vec::with_capacity(body.len() + 8);
+                    patched_body.extend_from_slice(&body[..cursor - 4]);
+                    patched_body.extend_from_slice(&encode_pkt_line(&line));
+                    patched_body.extend_from_slice(&body[data_end..]);
+                    body = patched_body;
+                    patched = true;
+                    break;
+                }
+                cursor = data_end;
             }
-            (StatusCode::BAD_GATEWAY, "missing git stdout").into_response()
+            if !patched && body.len() >= 4 && &body[body.len() - 4..] == PKT_FLUSH {
+                let mut patched_body = Vec::with_capacity(body.len() + 8);
+                patched_body.extend_from_slice(&body[..body.len() - 4]);
+                patched_body.extend_from_slice(&encode_pkt_line(b"fetch=filter\n"));
+                patched_body.extend_from_slice(PKT_FLUSH);
+                body = patched_body;
+            }
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "application/x-git-upload-pack-advertisement")
+                .header(header::CACHE_CONTROL, "no-cache")
+                .body(axum::body::Body::from(body))
+                .expect("response build");
         }
+        Ok(output) => (StatusCode::BAD_GATEWAY, format!("git upload-pack advertise failed: {}", output.status)).into_response(),
         Err(e) => (StatusCode::BAD_GATEWAY, format!("failed to spawn git: {e}")).into_response(),
     }
 }

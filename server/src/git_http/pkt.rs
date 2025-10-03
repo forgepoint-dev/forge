@@ -19,14 +19,24 @@ pub const PKT_DELIM: &[u8] = b"0001";
 pub fn decode_pkt_lines(mut buf: &[u8]) -> anyhow::Result<Vec<Pkt>> {
     let mut out = Vec::new();
     while !buf.is_empty() {
-        if buf.len() < 4 { anyhow::bail!("truncated pkt-line length"); }
+        if buf.len() < 4 {
+            anyhow::bail!("truncated pkt-line length");
+        }
         let len_hex = &buf[..4];
         let len = usize::from_str_radix(std::str::from_utf8(len_hex)?, 16)?;
         buf = &buf[4..];
-        if len == 0 { out.push(Pkt::Flush); continue; }
-        if len == 1 { out.push(Pkt::Delim); continue; }
+        if len == 0 {
+            out.push(Pkt::Flush);
+            continue;
+        }
+        if len == 1 {
+            out.push(Pkt::Delim);
+            continue;
+        }
         let data_len = len - 4;
-        if buf.len() < data_len { anyhow::bail!("truncated pkt-line data"); }
+        if buf.len() < data_len {
+            anyhow::bail!("truncated pkt-line data");
+        }
         let data = &buf[..data_len];
         out.push(Pkt::Data(data.to_vec()));
         buf = &buf[data_len..];
@@ -35,7 +45,11 @@ pub fn decode_pkt_lines(mut buf: &[u8]) -> anyhow::Result<Vec<Pkt>> {
 }
 
 #[derive(Debug, Clone)]
-pub enum Pkt { Data(Vec<u8>), Flush, Delim }
+pub enum Pkt {
+    Data(Vec<u8>),
+    Flush,
+    Delim,
+}
 
 #[cfg(test)]
 mod tests {

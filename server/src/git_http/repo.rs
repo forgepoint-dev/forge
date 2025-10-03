@@ -2,7 +2,10 @@ use std::path::PathBuf;
 
 use crate::repository::RepositoryStorage;
 
-pub fn resolve_repo_dir(storage: &RepositoryStorage, segments: &[String]) -> anyhow::Result<PathBuf> {
+pub fn resolve_repo_dir(
+    storage: &RepositoryStorage,
+    segments: &[String],
+) -> anyhow::Result<PathBuf> {
     // Accept repo or repo.git directory structure. Try exact first, then with .git suffix.
     match storage.ensure_local_repository(segments) {
         Ok(p) => Ok(p),

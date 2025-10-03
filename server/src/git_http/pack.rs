@@ -4,7 +4,7 @@ use axum::body::Body;
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::Response;
 use bytes::Bytes;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::io::{Result as IoResult, Write};
 use std::path::PathBuf;
 use tokio::sync::mpsc;
@@ -208,38 +208,7 @@ fn build_and_stream_pack(
     hasher.update(&header);
     out.send_chunk(&header)?;
 
-    // helper to write one object entry as full (no delta)
-    let mut write_obj = |oid: gix::hash::ObjectId| -> anyhow::Result<()> {
-        let obj = repo.find_object(oid)?;
-        // Encode object header + raw data for commit/tree/blob/tag
-        let (kind, data) = match obj.kind {
-            gix::objs::Kind::Commit => (1u8, obj.data.to_vec()),
-            gix::objs::Kind::Tree => (2u8, obj.data.to_vec()),
-            gix::objs::Kind::Blob => (3u8, obj.data.to_vec()),
-            gix::objs::Kind::Tag => (4u8, obj.data.to_vec()),
-        };
-        let mut hdr = encode_obj_header(kind, data.len() as u64);
-        hasher.update(&hdr);
-        out.send_chunk(&hdr)?;
-        // compress
-        let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
-        encoder.write_all(&data)?;
-        let compressed = encoder.finish()?;
-        hasher.update(&compressed);
-        out.send_chunk(&compressed)?;
-        Ok(())
-    };
-
-    // Build a quick lookup for client haves (used to enable thin-pack commit deltas)
-    let mut have_set: HashSet<gix::hash::ObjectId> = HashSet::new();
-    for h in req.haves() {
-        if let Ok(oid) = gix::hash::ObjectId::from_hex(h.as_bytes()) { have_set.insert(oid); }
-    }
-
-    // Minimal delta encoder: emit a REF_DELTA for commits when thin-pack is negotiated
-    // and a suitable base commit exists in client haves. The delta encodes the full
-    // result via insert ops only. This yields a valid thin-pack the client can fix.
-    let mut encode_varint = |mut n: u64| -> Vec<u8> {
+    fn encode_varint(mut n: u64) -> Vec<u8> {
         let mut v = Vec::new();
         loop {
             let mut byte = (n & 0x7f) as u8;
@@ -249,9 +218,39 @@ fn build_and_stream_pack(
             if n == 0 { break; }
         }
         v
-    };
+    }
 
-    let mut write_ref_delta_commit = |target_oid: gix::hash::ObjectId, base_oid: gix::hash::ObjectId| -> anyhow::Result<()> {
+    fn write_full_object(
+        repo: &gix::Repository,
+        out: &mut SidebandPktWriter,
+        hasher: &mut sha1::Sha1,
+        oid: gix::hash::ObjectId,
+    ) -> anyhow::Result<()> {
+        let obj = repo.find_object(oid)?;
+        let (kind, data) = match obj.kind {
+            gix::objs::Kind::Commit => (1u8, obj.data.to_vec()),
+            gix::objs::Kind::Tree => (2u8, obj.data.to_vec()),
+            gix::objs::Kind::Blob => (3u8, obj.data.to_vec()),
+            gix::objs::Kind::Tag => (4u8, obj.data.to_vec()),
+        };
+        let hdr = encode_obj_header(kind, data.len() as u64);
+        hasher.update(&hdr);
+        out.send_chunk(&hdr)?;
+        let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(&data)?;
+        let compressed = encoder.finish()?;
+        hasher.update(&compressed);
+        out.send_chunk(&compressed)?;
+        Ok(())
+    }
+
+    fn write_commit_ref_delta(
+        repo: &gix::Repository,
+        out: &mut SidebandPktWriter,
+        hasher: &mut sha1::Sha1,
+        target_oid: gix::hash::ObjectId,
+        base_oid: gix::hash::ObjectId,
+    ) -> anyhow::Result<()> {
         let base_obj = repo.find_object(base_oid)?;
         if base_obj.kind != gix::objs::Kind::Commit { anyhow::bail!("delta base is not a commit"); }
         let base_size = base_obj.data.len() as u64;
@@ -260,62 +259,66 @@ fn build_and_stream_pack(
         if targ_obj.kind != gix::objs::Kind::Commit { anyhow::bail!("target is not a commit"); }
         let data = targ_obj.data.to_vec();
 
-        // Build a delta that inserts the entire target content.
-        let mut delta = Vec::with_capacity(16 + data.len() + (data.len() / 127) + 8);
+        let mut delta = Vec::with_capacity(16 + data.len());
         delta.extend_from_slice(&encode_varint(base_size));
         delta.extend_from_slice(&encode_varint(data.len() as u64));
         let mut i = 0;
         while i < data.len() {
             let take = (data.len() - i).min(127);
-            delta.push(take as u8); // insert op (high bit 0) with length
+            delta.push(take as u8);
             delta.extend_from_slice(&data[i..i + take]);
             i += take;
         }
 
-        // Header: REF_DELTA (type=7) with target size
-        let mut hdr = encode_obj_header(7u8, data.len() as u64);
+        let hdr = encode_obj_header(7u8, data.len() as u64);
         hasher.update(&hdr);
         out.send_chunk(&hdr)?;
 
-        // 20-byte base object id
         let base_raw = base_oid.as_bytes();
         hasher.update(base_raw);
         out.send_chunk(base_raw)?;
 
-        // Compress delta payload
         let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
         encoder.write_all(&delta)?;
         let compressed = encoder.finish()?;
         hasher.update(&compressed);
         out.send_chunk(&compressed)?;
         Ok(())
-    };
+    }
 
-    // Write commits: prefer thin-pack ref-delta against a have'd parent when possible
+    let mut have_set: HashSet<gix::hash::ObjectId> = HashSet::new();
+    for h in req.haves() {
+        if let Ok(oid) = gix::hash::ObjectId::from_hex(h.as_bytes()) { have_set.insert(oid); }
+    }
+
     for id in &commits {
-        let mut wrote = false;
+        let mut wrote_delta = false;
         if req.thin_pack() {
-            // Choose a base: prefer direct parent that exists in client haves
             if let Ok(obj) = repo.find_object(*id) {
                 if obj.kind == gix::objs::Kind::Commit {
                     if let Ok((_, parents)) = parse_commit_raw(obj.data.as_ref()) {
                         if let Some(base) = parents.into_iter().find(|p| have_set.contains(p)) {
-                            if let Err(e) = write_ref_delta_commit((*id).into(), base) {
-                                tracing::debug!("ref-delta emit failed for {}: {}", id, e);
-                            } else {
-                                wrote = true;
+                            match write_commit_ref_delta(&repo, &mut out, &mut hasher, (*id).into(), base) {
+                                Ok(_) => wrote_delta = true,
+                                Err(e) => tracing::debug!("ref-delta emit failed for {}: {}", id, e),
                             }
                         }
                     }
                 }
             }
         }
-        if !wrote { write_obj(*id)?; }
+        if !wrote_delta {
+            write_full_object(&repo, &mut out, &mut hasher, (*id).into())?;
+        }
     }
-    for id in &seen_tree { write_obj((*id).into())?; }
-    for id in &blobs { write_obj((*id).into())?; }
 
-    // Trailer: pack SHA1
+    for id in &seen_tree {
+        write_full_object(&repo, &mut out, &mut hasher, (*id).into())?;
+    }
+    for id in &blobs {
+        write_full_object(&repo, &mut out, &mut hasher, (*id).into())?;
+    }
+
     let trailer = hasher.finalize();
     out.send_chunk(trailer.as_slice())?;
 
@@ -571,7 +574,6 @@ fn plan_pack(repo_dir: PathBuf, req: &FetchRequest) -> anyhow::Result<PackPlan> 
 
     // Include any direct blob wants (lazy fetches)
     for oid in direct_blobs {
-        if req.filter_blob_none() { continue; }
         if let Some(limit) = blob_limit {
             if let Ok(obj) = repo.find_object(oid) {
                 if obj.kind == gix::objs::Kind::Blob && obj.data.len() > limit { continue; }
@@ -710,6 +712,7 @@ async fn resolve_want_refs(repo_dir: &PathBuf, req: &mut FetchRequest) -> anyhow
             }
         }
     }
-    req.wants().to_vec().extend(new_wants);
+    // Fix: Actually mutate the request's wants vector
+    req.wants.extend(new_wants);
     Ok(())
 }

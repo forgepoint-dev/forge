@@ -14,10 +14,7 @@ impl IntoResponse for GitHttpError {
             GitHttpError::NotFound => (StatusCode::NOT_FOUND, "not found").into_response(),
             GitHttpError::Forbidden => (StatusCode::FORBIDDEN, "forbidden").into_response(),
             GitHttpError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg).into_response(),
-            GitHttpError::Internal(msg) => {
-                (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
-            }
+            GitHttpError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response(),
         }
     }
 }
-
