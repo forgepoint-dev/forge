@@ -53,7 +53,7 @@ pub async fn create_repository_raw(
 
 pub async fn link_remote_repository_raw(
     pool: &SqlitePool,
-    _storage: &RepositoryStorage,
+    storage: &RepositoryStorage,
     url: String,
 ) -> anyhow::Result<RepositoryRecord> {
     let (normalized_url, slug) = normalize_remote_repository(&url)?;
@@ -69,6 +69,36 @@ pub async fn link_remote_repository_raw(
     }
 
     let id = cuid2::create_id();
+
+    // Clone the repository to local storage as a bare repository
+    let local_path = storage.local_root.join(format!("{}.git", slug));
+    let url_clone = normalized_url.clone();
+    let local_path_clone = local_path.clone();
+
+    tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+        // Ensure parent directory exists
+        if let Some(parent) = local_path_clone.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        // Remove existing directory if present (for re-linking scenarios)
+        if local_path_clone.exists() {
+            std::fs::remove_dir_all(&local_path_clone)?;
+        }
+
+        // Clone as bare repository using fetch_only which creates a bare repo
+        let mut prepare = gix::prepare_clone(url_clone, &local_path_clone)?;
+        let (_repo, _outcome) = prepare
+            .fetch_only(gix::progress::Discard, &gix::interrupt::IS_INTERRUPTED)?;
+
+        // Mark repository as public by creating git-daemon-export-ok
+        std::fs::write(local_path_clone.join("git-daemon-export-ok"), b"")?;
+
+        Ok(())
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("Failed to spawn clone task: {}", e))??;
+
     sqlx::query(
         "INSERT INTO repositories (id, slug, \"group\", remote_url) VALUES (?, ?, NULL, ?)",
     )

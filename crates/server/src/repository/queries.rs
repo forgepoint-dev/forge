@@ -78,11 +78,8 @@ pub async fn browse_repository_raw(
 
     let normalized_tree_path = normalize_tree_path(tree_path)?;
 
-    let repository_path = if record.remote_url.is_some() {
-        storage.ensure_remote_repository(&record).await?
-    } else {
-        storage.ensure_local_repository(&segments)?
-    };
+    // Both local and remote repositories are now in local storage
+    let repository_path = storage.ensure_local_repository(&segments)?;
 
     let entries =
         read_repository_entries(repository_path, normalized_tree_path.clone(), branch).await?;
@@ -117,11 +114,8 @@ pub async fn list_repository_branches_raw(
         return Ok(None);
     };
 
-    let repository_path = if record.remote_url.is_some() {
-        storage.ensure_remote_repository(&record).await?
-    } else {
-        storage.ensure_local_repository(&segments)?
-    };
+    // Both local and remote repositories are now in local storage
+    let repository_path = storage.ensure_local_repository(&segments)?;
 
     let branches = task::spawn_blocking(move || list_repository_branches_blocking(repository_path))
         .await
@@ -275,11 +269,8 @@ pub async fn read_repository_file_raw(
 
     let normalized_file_path = normalize_file_path(file_path)?;
 
-    let repository_path = if record.remote_url.is_some() {
-        storage.ensure_remote_repository(&record).await?
-    } else {
-        storage.ensure_local_repository(&segments)?
-    };
+    // Both local and remote repositories are now in local storage
+    let repository_path = storage.ensure_local_repository(&segments)?;
 
     let file =
         read_repository_file_for_branch(repository_path, normalized_file_path, branch).await?;

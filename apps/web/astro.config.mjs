@@ -36,5 +36,23 @@ export default defineConfig({
 	},
 	vite: {
 		plugins: [slotPlugin],
+		server: {
+			proxy: {
+				// Proxy git HTTP protocol requests to the backend API server
+				// This allows git clone http://localhost:4321/... to work
+				'^/.*/info/refs': {
+					target: 'http://localhost:8000',
+					changeOrigin: true,
+				},
+				'^/.*/git-upload-pack': {
+					target: 'http://localhost:8000',
+					changeOrigin: true,
+				},
+				'^/.*/git-receive-pack': {
+					target: 'http://localhost:8000',
+					changeOrigin: true,
+				},
+			},
+		},
 	},
 });

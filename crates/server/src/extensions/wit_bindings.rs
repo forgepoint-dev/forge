@@ -17,7 +17,7 @@ use wasmtime_wasi::p2::{add_to_linker_sync, IoView, WasiCtx, WasiCtxBuilder, Was
 // Note: Using sync (not async) to avoid Send+Sync issues with WASI types in Store
 wasmtime::component::bindgen!({
     world: "extension",
-    path: "../packages/wit",
+    path: "../../packages/wit",
     async: false,
 });
 

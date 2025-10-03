@@ -250,13 +250,13 @@ const authLoginUrl = (() => {
     </section>
 
     <!-- Dialogs -->
-    <CreateRepositoryModal 
-      v-model:open="showCreateDialog" 
+    <CreateRepositoryModal
+      v-model:open="showCreateDialog"
       :groups="groups"
       @create="createRepository"
     />
-    <LinkRepositoryModal 
-      v-model:open="showLinkDialog" 
+    <LinkRepositoryModal
+      v-model:open="showLinkDialog"
       @link="linkRepository"
     />
 

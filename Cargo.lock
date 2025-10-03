@@ -1542,6 +1542,7 @@ dependencies = [
  "anyhow",
  "axum",
  "bytes",
+ "flate2",
  "futures",
  "gix",
  "metrics",
@@ -1552,6 +1553,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-util",
+ "tracing",
 ]
 
 [[package]]

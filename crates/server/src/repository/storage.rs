@@ -24,17 +24,29 @@ impl RepositoryStorage {
             path.push(segment);
         }
 
-        tracing::info!("ensure_local_repository query: {}", path.display());
-        if path.is_dir() {
-            tracing::info!("ensure_local_repository found: {}", path.display());
-            Ok(path)
+        // Repositories are stored with .git suffix (bare repositories)
+        // Append .git to the final path to match the storage format
+        let repo_path = path.with_extension("git");
+
+        tracing::info!("ensure_local_repository query: {}", repo_path.display());
+
+        // Check if this is a non-bare repository (has .git subdirectory)
+        let git_dir = repo_path.join(".git");
+        let actual_repo_path = if git_dir.is_dir() {
+            tracing::info!("ensure_local_repository found non-bare repo, using .git subdirectory: {}", git_dir.display());
+            git_dir
+        } else if repo_path.is_dir() {
+            tracing::info!("ensure_local_repository found bare repo: {}", repo_path.display());
+            repo_path.clone()
         } else {
-            tracing::info!("ensure_local_repository missing: {}", path.display());
-            Err(anyhow::anyhow!(
+            tracing::info!("ensure_local_repository missing: {}", repo_path.display());
+            return Err(anyhow::anyhow!(
                 "repository directory not found at {}",
-                path.display()
-            ))
-        }
+                repo_path.display()
+            ));
+        };
+
+        Ok(actual_repo_path)
     }
 
     pub async fn ensure_remote_repository(
